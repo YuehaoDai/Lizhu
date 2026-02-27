@@ -49,7 +49,7 @@ llm:
   model: "gpt-4o"
 
 user:
-  name: "你的道号"
+  name: "你的名字"
   active_path: "both"      # "go" | "ai" | "both"
 ```
 
