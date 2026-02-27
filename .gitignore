@@ -1,0 +1,33 @@
+# 二进制产物
+lizhu
+lizhu-server
+dist/
+bin/
+
+# 配置文件（含敏感信息）
+lizhu.yaml
+*.local.yaml
+
+# Go
+vendor/
+*.test
+*.out
+coverage.html
+coverage.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# 数据库本地数据（Docker volume 在容器内，但防止误导出）
+*.db
+*.sqlite
+
+# 日志
+*.log
+
+# 测试缓存
+testdata/tmp/

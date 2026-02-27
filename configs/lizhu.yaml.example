@@ -1,0 +1,33 @@
+# 骊珠 (Lizhu) 配置文件模板
+# 复制为 lizhu.yaml 并填入真实值
+
+llm:
+  provider: "openai"        # 支持: openai, anthropic（后续版本）
+  api_key: "sk-your-key"   # LLM API Key
+  model: "gpt-4o"           # 推荐 gpt-4o 或 gpt-4-turbo
+  base_url: ""              # 自定义端点（如中转 API），空则使用官方
+
+database:
+  host: "localhost"
+  port: 5432
+  name: "lizhu"
+  user: "lizhu"
+  password: "lizhu"
+  ssl_mode: "disable"
+
+milvus:
+  enabled: false            # 设为 true 启用 RAG 知识库（需先启动 Milvus）
+  address: "localhost:19530"
+  collection: "lizhu_knowledge"
+  embedding_model: "text-embedding-3-small"
+
+worldview:
+  path: "./configs/worldview"   # 世界观 YAML 配置目录
+
+user:
+  name: "修行者"             # 你的道号
+  active_path: "both"        # 主修路径: "go"（Go开发）| "ai"（AI应用）| "both"（两条并修）
+
+session:
+  history_window: 5          # 注入上下文的历次会话摘要数量
+  max_tokens: 4096           # 单次对话最大 token
