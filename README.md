@@ -1,5 +1,9 @@
 # 骊珠 (Lizhu)
 
+<p align="center">
+  <img src="assets/banner.png" alt="骊珠 Banner" width="480"/>
+</p>
+
 > 基于《剑来》修行世界观设计的 **Go & AI 开发者智能护道系统**
 
 护道人持续做三件事：**诊断**你的修行境界、**规划**最短破境路径、**护道**避免走火入魔。
