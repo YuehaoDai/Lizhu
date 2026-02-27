@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/daiyh/lizhu/internal/memory/episodic"
+	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
 )
 
 // persistEvaluation 解析 LLM 响应中的评估 JSON，

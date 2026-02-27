@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/daiyh/lizhu/internal/worldview"
+	"github.com/YuehaoDai/lizhu/internal/worldview"
 )
 
 const testDataDir = "testdata/worldview"

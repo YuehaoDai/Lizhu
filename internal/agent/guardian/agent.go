@@ -10,8 +10,8 @@ import (
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	"github.com/daiyh/lizhu/internal/memory/episodic"
-	"github.com/daiyh/lizhu/internal/worldview"
+	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
+	"github.com/YuehaoDai/lizhu/internal/worldview"
 )
 
 // Config 护道人 Agent 配置。

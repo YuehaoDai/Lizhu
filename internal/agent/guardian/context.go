@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/daiyh/lizhu/internal/memory/episodic"
+	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
 )
 
 // buildContextBlock 将用户档案、历史摘要、工具掌握度

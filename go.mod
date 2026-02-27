@@ -1,4 +1,4 @@
-module github.com/daiyh/lizhu
+module github.com/YuehaoDai/lizhu
 
 go 1.21.0
 

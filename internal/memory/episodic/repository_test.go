@@ -3,7 +3,7 @@ package episodic_test
 import (
 	"testing"
 
-	"github.com/daiyh/lizhu/internal/memory/episodic"
+	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
 )
 
 func TestScoreToLevel(t *testing.T) {

@@ -3,7 +3,7 @@ package guardian_test
 import (
 	"testing"
 
-	"github.com/daiyh/lizhu/internal/agent/guardian"
+	"github.com/YuehaoDai/lizhu/internal/agent/guardian"
 )
 
 const sampleResponse = `
