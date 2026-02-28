@@ -6,32 +6,20 @@ import (
 	"os"
 	"strings"
 
-	"github.com/YuehaoDai/lizhu/internal/tui"
 	"github.com/chzyer/readline"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cloudwego/eino/schema"
 	"github.com/spf13/cobra"
 )
-
-var chatTUIMode bool
 
 var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "与护道人开始修行对话",
 	Long: `启动与护道人的交互式对话。
-默认使用经典 readline CLI 模式；加 --tui 标志启用 Bubble Tea 全屏界面（实验性）。
 
 输入 /quit 或 /exit 结束对话，/clear 清空本次会话历史，/status 查看当前档案。`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if chatTUIMode {
-			return runChatTUI(cmd.Context())
-		}
 		return runChatCLI(cmd.Context())
 	},
-}
-
-func init() {
-	chatCmd.Flags().BoolVar(&chatTUIMode, "tui", false, "启用 Bubble Tea 全屏 TUI 界面（实验性）")
 }
 
 // guardianLabel 返回护道人的显示名称。
@@ -42,37 +30,7 @@ func guardianLabel(personaName string) string {
 	return "护道人"
 }
 
-// ---- TUI 模式 ----
-
-func runChatTUI(ctx context.Context) error {
-	agent, err := newGuardianAgent(ctx)
-	if err != nil {
-		return err
-	}
-
-	label := guardianLabel(agent.PersonaName())
-
-	epProfile, err := repo.GetOrCreateProfile(ctx, "default")
-	if err != nil {
-		return fmt.Errorf("读取修行档案失败: %w", err)
-	}
-
-	m := tui.New(tui.Config{
-		Agent:         agent,
-		Repo:          repo,
-		Ctx:           ctx,
-		GuardianLabel: label,
-		Profile:       epProfile,
-	})
-
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	if _, err := p.Run(); err != nil {
-		return fmt.Errorf("TUI 运行失败: %w", err)
-	}
-	return nil
-}
-
-// ---- CLI 模式（readline，稳定退路）----
+// ---- CLI 模式 ----
 
 func runChatCLI(ctx context.Context) error {
 	agent, err := newGuardianAgent(ctx)
@@ -265,7 +223,7 @@ func printWelcomeCLI(label, entranceScene string, firstTime bool) {
 			fmt.Printf("%s：来了，坐。\n", label)
 		}
 	}
-	fmt.Println("\n输入 /help 查看可用命令。（加 --tui 可启用实验性全屏界面）")
+	fmt.Println("\n输入 /help 查看可用命令。")
 	fmt.Println()
 }
 
