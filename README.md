@@ -225,7 +225,7 @@ llm:
   base_url: ""              # 使用 DashScope 等时填写自定义端点
 
 user:
-  name: "你的道号"
+  name: "你的名字"
   active_path: "both"       # "go" | "ai" | "both"
 ```
 

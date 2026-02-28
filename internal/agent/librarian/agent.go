@@ -69,7 +69,7 @@ func (a *Agent) Summarize(ctx context.Context, filePath, content string) (string
 }
 
 // SummarizeSession 对一次护道对话生成简短摘要（一两句话），用于会话历史展示。
-// userName 为修行者道号，userInput 为用户输入，reply 为护道人回复。
+// userName 为修行者名字，userInput 为用户输入，reply 为护道人回复。
 func (a *Agent) SummarizeSession(ctx context.Context, userName, userInput, reply string) (string, error) {
 	// 截断过长内容防止 token 溢出
 	if len(userInput) > 800 {

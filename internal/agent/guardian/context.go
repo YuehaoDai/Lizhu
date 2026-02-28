@@ -24,7 +24,7 @@ func buildContextBlock(
 	sb.WriteString("========================\n\n")
 
 	// 修行者信息
-	sb.WriteString(fmt.Sprintf("修行者道号：%s\n", userName))
+	sb.WriteString(fmt.Sprintf("修行者名字：%s\n", userName))
 	sb.WriteString(fmt.Sprintf("主修路径：%s\n\n", profile.ActivePath))
 
 	// Go练气士状态

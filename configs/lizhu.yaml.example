@@ -28,7 +28,7 @@ notes:
   path: "./notes"               # 修行笔记根目录（lizhu note add 的默认搜索路径）
 
 user:
-  name: "修行者"             # 你的道号
+  name: "修行者"             # 你的名字
   active_path: "both"        # 主修路径: "go"（Go开发）| "ai"（AI应用）| "both"（两条并修）
 
 session:
