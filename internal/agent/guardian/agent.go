@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/YuehaoDai/lizhu/internal/agent/librarian"
 	"github.com/YuehaoDai/lizhu/internal/knowledge"
 	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
 	"github.com/YuehaoDai/lizhu/internal/worldview"
@@ -47,6 +48,7 @@ type Agent struct {
 	loader    *worldview.Loader
 	repo      *episodic.Repository
 	retriever *knowledge.Retriever
+	librarian *librarian.Agent
 }
 
 // PersonaName 返回护道人显示名称（空字符串表示使用默认"护道人"）。
@@ -72,12 +74,24 @@ func New(ctx context.Context, cfg Config, repo *episodic.Repository) (*Agent, er
 		}
 	}
 
+	libAgent, err := librarian.New(ctx, librarian.Config{
+		APIKey:  cfg.APIKey,
+		Model:   cfg.Model,
+		BaseURL: cfg.BaseURL,
+	})
+	if err != nil {
+		// Librarian 初始化失败不应阻断主流程，降级为 nil（persistSession 会回退到截断摘要）
+		fmt.Printf("[警告] 知识整理官初始化失败，会话摘要将使用截断文本: %v\n", err)
+		libAgent = nil
+	}
+
 	return &Agent{
 		cfg:       cfg,
 		model:     m,
 		loader:    worldview.NewLoader(cfg.WorldViewDir),
 		repo:      repo,
 		retriever: knowledge.NewRetriever(cfg.KnowledgeCfg),
+		librarian: libAgent,
 	}, nil
 }
 
@@ -126,7 +140,7 @@ func (a *Agent) Chat(ctx context.Context, history []*schema.Message, userInput s
 			fmt.Printf("[警告] 修行档案持久化失败: %v\n", err)
 		}
 	} else {
-		if err := a.persistSession(ctx, reply); err != nil {
+		if err := a.persistSession(ctx, userInput, reply); err != nil {
 			fmt.Printf("[警告] 会话记录保存失败: %v\n", err)
 		}
 	}
@@ -238,7 +252,7 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 	}
 
 	reply := fullReply.String()
-	if err := a.persistSession(ctx, reply); err != nil {
+	if err := a.persistSession(ctx, userInput, reply); err != nil {
 		fmt.Printf("[警告] 会话记录保存失败: %v\n", err)
 	}
 	newHistory := append(history,

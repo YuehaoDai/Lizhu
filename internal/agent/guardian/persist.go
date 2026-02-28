@@ -3,6 +3,7 @@ package guardian
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
 )
@@ -91,13 +92,30 @@ func (a *Agent) persistEvaluation(ctx context.Context, response string) error {
 
 // persistSession 在普通护道对话（Mode B）结束后保存轻量级会话记录。
 // 不含评估分数，仅记录会话发生（用于"初次相见"逻辑与历史摘要注入）。
-func (a *Agent) persistSession(ctx context.Context, reply string) error {
-	// 取回复前 120 个字符作为摘要
-	runes := []rune(reply)
-	summary := string(runes)
-	if len(runes) > 120 {
-		summary = string(runes[:120]) + "……"
+func (a *Agent) persistSession(ctx context.Context, userInput, reply string) error {
+	var summary string
+
+	// 优先调用 Librarian 生成真正的语义摘要
+	if a.librarian != nil {
+		sumCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		s, err := a.librarian.SummarizeSession(sumCtx, a.cfg.UserName, userInput, reply)
+		if err == nil && s != "" {
+			summary = s
+		} else {
+			fmt.Printf("[警告] 会话摘要生成失败，回退到截断文本: %v\n", err)
+		}
 	}
+
+	// 降级：Librarian 不可用时截取回复前 80 字
+	if summary == "" {
+		runes := []rune(reply)
+		summary = string(runes)
+		if len(runes) > 80 {
+			summary = string(runes[:80]) + "……"
+		}
+	}
+
 	session := &episodic.Session{
 		UserID:          a.cfg.UserID,
 		Summary:         summary,
