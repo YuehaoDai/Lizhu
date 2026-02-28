@@ -124,48 +124,85 @@ func runChatCLI(ctx context.Context) error {
 		case "/help":
 			printChatHelp()
 			continue
-		case "/assess":
-			input = "[修行者请求完整境界评估] /assess"
-		}
+	case "/assess":
+		input = "[修行者请求完整境界评估] /assess"
+	}
+
+		assess := input == "[修行者请求完整境界评估] /assess"
 
 		fmt.Printf("\n%s › \n", label)
 		fmt.Println(strings.Repeat("─", 60))
 
-		// 滑动缓冲区过滤器：保留末尾 len("<eval_json>")-1 字节作为"预警窗口"，
-		// 确保跨 token 分割的 <eval_json> 标签也能被完整检测到。
-		const evalTag = "<eval_json>"
-		var buf strings.Builder
-		evalTagSeen := false
-		_, newHistory, err := agent.ChatStream(ctx, history, input, func(token string) {
-			if evalTagSeen {
-				return
-			}
-			buf.WriteString(token)
-			s := buf.String()
-			if idx := strings.Index(s, evalTag); idx >= 0 {
-				evalTagSeen = true
-				if idx > 0 {
-					fmt.Print(s[:idx])
+		var (
+			newHistory []*schema.Message
+			chatErr    error
+		)
+
+		if assess {
+			// 评估模式：LLM 会生成 eval_json（及其前的标题行），使用多触发器滑动缓冲区过滤。
+			// 触发器按优先级：先检测 "修行档案JSON"（标题行），再检测 "<eval_json>"（标签本身）。
+			// 检测到任一触发器时，从所在行的行首开始截断（不打印该行及之后的内容）。
+			suppressTriggers := []string{"修行档案JSON", "<eval_json>"}
+			maxTrigLen := 0
+			for _, t := range suppressTriggers {
+				if len(t) > maxTrigLen {
+					maxTrigLen = len(t)
 				}
-				buf.Reset()
-				return
 			}
-			// 保留末尾 len(evalTag)-1 字节，剩余部分安全输出
-			safe := len(s) - (len(evalTag) - 1)
-			if safe > 0 {
-				fmt.Print(s[:safe])
-				tail := s[safe:]
-				buf.Reset()
-				buf.WriteString(tail)
+			var buf strings.Builder
+			suppressed := false
+			_, newHistory, chatErr = agent.ChatStream(ctx, history, input, func(token string) {
+				if suppressed {
+					return
+				}
+				buf.WriteString(token)
+				s := buf.String()
+
+				// 检查是否命中任一触发器
+				hitIdx := -1
+				for _, trig := range suppressTriggers {
+					if idx := strings.Index(s, trig); idx >= 0 {
+						if hitIdx < 0 || idx < hitIdx {
+							hitIdx = idx
+						}
+					}
+				}
+				if hitIdx >= 0 {
+					suppressed = true
+					// 从行首截断：找到 hitIdx 之前最近的换行符
+					printUntil := hitIdx
+					if nl := strings.LastIndex(s[:hitIdx], "\n"); nl >= 0 {
+						printUntil = nl + 1 // 保留换行符本身，但不打印触发行
+					}
+					if printUntil > 0 {
+						fmt.Print(s[:printUntil])
+					}
+					buf.Reset()
+					return
+				}
+
+				// 保留末尾 maxTrigLen-1 字节作为预警窗口
+				safe := len(s) - (maxTrigLen - 1)
+				if safe > 0 {
+					fmt.Print(s[:safe])
+					tail := s[safe:]
+					buf.Reset()
+					buf.WriteString(tail)
+				}
+			}, true)
+			if !suppressed && buf.Len() > 0 {
+				fmt.Print(buf.String())
 			}
-		})
-		// 冲刷剩余缓冲（未出现 eval_json 标签时）
-		if !evalTagSeen && buf.Len() > 0 {
-			fmt.Print(buf.String())
+		} else {
+			// 普通护道对话：LLM 不生成 eval_json，token 直接输出
+			_, newHistory, chatErr = agent.ChatStream(ctx, history, input, func(token string) {
+				fmt.Print(token)
+			}, false)
 		}
+
 		fmt.Println()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "\n[错误] %v\n", err)
+		if chatErr != nil {
+			fmt.Fprintf(os.Stderr, "\n[错误] %v\n", chatErr)
 			continue
 		}
 		history = newHistory

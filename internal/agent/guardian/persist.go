@@ -89,6 +89,24 @@ func (a *Agent) persistEvaluation(ctx context.Context, response string) error {
 	return nil
 }
 
+// persistSession 在普通护道对话（Mode B）结束后保存轻量级会话记录。
+// 不含评估分数，仅记录会话发生（用于"初次相见"逻辑与历史摘要注入）。
+func (a *Agent) persistSession(ctx context.Context, reply string) error {
+	// 取回复前 120 个字符作为摘要
+	runes := []rune(reply)
+	summary := string(runes)
+	if len(runes) > 120 {
+		summary = string(runes[:120]) + "……"
+	}
+	session := &episodic.Session{
+		UserID:          a.cfg.UserID,
+		Summary:         summary,
+		XinMoIdentified: []string{},
+		RawResponse:     reply,
+	}
+	return a.repo.SaveSession(ctx, session)
+}
+
 // zeroIfNeg 将负数归零，用于过滤模式 B 中填写的 -1 占位值。
 func zeroIfNeg(v int) int {
 	if v < 0 {

@@ -15,6 +15,9 @@ type Section struct {
 	// EntrancePrompt 是专用于生成该人格出场场景描写的系统提示。
 	// 仅在 persona YAML 文件中设置；供 Loader.LoadEntrancePrompt 读取。
 	EntrancePrompt string `yaml:"entrance_prompt"`
+	// AssessOnly 标记该节仅在评估模式（assess=true）下注入。
+	// 普通护道对话模式下该节会被跳过，LLM 不会收到 eval_json 相关指令。
+	AssessOnly bool `yaml:"assess_only"`
 }
 
 // ActivePath 代表用户当前激活的练气士修行路径。

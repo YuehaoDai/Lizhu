@@ -292,7 +292,7 @@ func (m *Model) startStream(input string) tea.Cmd {
 	go func() {
 		_, newHistory, err := agent.ChatStream(ctx, history, input, func(token string) {
 			tokenCh <- token
-		})
+		}, false)
 		close(tokenCh)
 		doneCh <- streamDoneMsg{newHistory: newHistory, err: err}
 	}()
