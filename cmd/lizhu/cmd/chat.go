@@ -76,6 +76,8 @@ func runChat(ctx context.Context) error {
 		case "/help":
 			printChatHelp()
 			continue
+		case "/assess":
+			input = "[修行者请求完整境界评估] /assess"
 		}
 
 		fmt.Printf("\n%s › ", label)
@@ -139,6 +141,7 @@ func printWelcome(profile *episodic.Profile, label string) {
 func printChatHelp() {
 	fmt.Print(`
 可用命令：
+  /assess  — 主动请求完整境界评估与破境方案
   /status  — 查看当前修行档案与法器谱
   /clear   — 清空本次会话历史（不影响已保存的档案）
   /quit    — 退出对话

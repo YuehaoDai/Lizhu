@@ -25,7 +25,7 @@ func (a *Agent) persistEvaluation(ctx context.Context, response, userInput strin
 		return err
 	}
 
-	// 仅更新非零字段（允许本次对话未涉及某路径时保留原始值）
+	// 仅更新非零且非 -1 的字段（-1 表示模式 B "本次未更新"，保留历史档案值）
 	if eval.GoLianqiScore > 0 {
 		profile.GoLianqiScore = eval.GoLianqiScore
 		profile.GoLianqiLevel = eval.GoLianqiLevel
@@ -55,13 +55,13 @@ func (a *Agent) persistEvaluation(ctx context.Context, response, userInput strin
 		return fmt.Errorf("update profile: %w", err)
 	}
 
-	// 2. 保存会话记录
+	// 2. 保存会话记录（-1 表示本次未更新，存入会话时归零）
 	session := &episodic.Session{
 		UserID:          a.cfg.UserID,
 		Summary:         eval.SessionSummary,
-		GoLianqiScore:   eval.GoLianqiScore,
-		AILianqiScore:   eval.AILianqiScore,
-		WufuScore:       eval.WufuScore,
+		GoLianqiScore:   zeroIfNeg(eval.GoLianqiScore),
+		AILianqiScore:   zeroIfNeg(eval.AILianqiScore),
+		WufuScore:       zeroIfNeg(eval.WufuScore),
 		XinMoIdentified: eval.XinMoIdentified,
 		RawResponse:     response,
 	}
@@ -87,6 +87,14 @@ func (a *Agent) persistEvaluation(ctx context.Context, response, userInput strin
 		}
 	}
 	return nil
+}
+
+// zeroIfNeg 将负数归零，用于过滤模式 B 中填写的 -1 占位值。
+func zeroIfNeg(v int) int {
+	if v < 0 {
+		return 0
+	}
+	return v
 }
 
 // mergeUnique 合并两个字符串切片，结果去重。
