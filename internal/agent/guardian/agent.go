@@ -6,6 +6,8 @@ package guardian
 import (
 	"context"
 	"fmt"
+	"io"
+	"strings"
 
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
@@ -53,36 +55,71 @@ func New(ctx context.Context, cfg Config, repo *episodic.Repository) (*Agent, er
 	}, nil
 }
 
-// Chat 处理一轮对话：构建上下文 → 调用 LLM → 解析结果 → 持久化。
+// Chat 处理一轮对话（非流式）：构建上下文 → 调用 LLM → 解析结果 → 持久化。
 func (a *Agent) Chat(ctx context.Context, history []*schema.Message, userInput string) (string, []*schema.Message, error) {
-	// 1. 构建系统消息（世界观 + 修行档案 + 历史摘要）
 	systemMsg, err := a.buildSystemMessage(ctx)
 	if err != nil {
 		return "", nil, fmt.Errorf("build system message: %w", err)
 	}
-
-	// 2. 组装完整消息列表
 	messages := buildMessages(systemMsg, history, userInput)
 
-	// 3. 调用 LLM
 	resp, err := a.model.Generate(ctx, messages)
 	if err != nil {
 		return "", nil, fmt.Errorf("llm generate: %w", err)
 	}
 	reply := resp.Content
 
-	// 4. 解析结构化 JSON 评估块并持久化
 	if err := a.persistEvaluation(ctx, reply, userInput); err != nil {
-		// 持久化失败不影响返回，仅打印警告
 		fmt.Printf("[警告] 修行档案持久化失败: %v\n", err)
 	}
 
-	// 5. 更新对话历史
 	newHistory := append(history,
 		schema.UserMessage(userInput),
 		schema.AssistantMessage(reply, nil),
 	)
+	return reply, newHistory, nil
+}
 
+// ChatStream 处理一轮对话（流式）：逐 token 回调 onToken，返回完整回复与新历史。
+func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userInput string, onToken func(string)) (string, []*schema.Message, error) {
+	systemMsg, err := a.buildSystemMessage(ctx)
+	if err != nil {
+		return "", nil, fmt.Errorf("build system message: %w", err)
+	}
+	messages := buildMessages(systemMsg, history, userInput)
+
+	stream, err := a.model.Stream(ctx, messages)
+	if err != nil {
+		return "", nil, fmt.Errorf("llm stream: %w", err)
+	}
+	defer stream.Close()
+
+	var fullReply strings.Builder
+	for {
+		chunk, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return "", nil, fmt.Errorf("stream recv: %w", err)
+		}
+		token := chunk.Content
+		if token != "" {
+			onToken(token)
+			fullReply.WriteString(token)
+		}
+	}
+
+	reply := fullReply.String()
+
+	if err := a.persistEvaluation(ctx, reply, userInput); err != nil {
+		fmt.Printf("[警告] 修行档案持久化失败: %v\n", err)
+	}
+
+	newHistory := append(history,
+		schema.UserMessage(userInput),
+		schema.AssistantMessage(reply, nil),
+	)
 	return reply, newHistory, nil
 }
 

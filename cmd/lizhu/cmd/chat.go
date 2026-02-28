@@ -72,14 +72,32 @@ func runChat(ctx context.Context) error {
 	fmt.Println()
 	fmt.Println(strings.Repeat("─", 60))
 
-		reply, newHistory, err := agent.Chat(ctx, history, input)
+		// 流式输出：遇到 <eval_json> 标记前的内容实时显示，之后的 token 静默缓冲
+		var printed strings.Builder
+		evalTagSeen := false
+		_, newHistory, err := agent.ChatStream(ctx, history, input, func(token string) {
+			if evalTagSeen {
+				return
+			}
+			combined := printed.String() + token
+			if idx := strings.Index(combined, "<eval_json>"); idx >= 0 {
+				evalTagSeen = true
+				visible := combined[:idx]
+				// 只打印还未输出的部分
+				fmt.Print(visible[printed.Len():])
+				printed.Reset()
+				printed.WriteString(visible)
+				return
+			}
+			fmt.Print(token)
+			printed.WriteString(token)
+		})
+		fmt.Println()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\n[错误] %v\n", err)
 			continue
 		}
 		history = newHistory
-
-		fmt.Println(filterEvalJSON(reply))
 		fmt.Println(strings.Repeat("─", 60))
 	}
 
