@@ -4,12 +4,12 @@ go 1.21.0
 
 require (
 	github.com/charmbracelet/lipgloss v0.10.0
-	github.com/chzyer/readline v1.5.1
 	github.com/cloudwego/eino v0.7.36
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.8
 	github.com/golang-migrate/migrate/v4 v4.17.1
 	github.com/jackc/pgx/v5 v5.5.5
 	github.com/milvus-io/milvus-sdk-go/v2 v2.4.2
+	github.com/peterh/liner v1.2.2
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.19.0
 	gopkg.in/yaml.v3 v3.0.1

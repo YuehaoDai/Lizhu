@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/chzyer/readline"
+	"github.com/peterh/liner"
 	"github.com/cloudwego/eino/schema"
 	"github.com/spf13/cobra"
 )
@@ -45,22 +45,16 @@ func runChatCLI(ctx context.Context) error {
 	entranceScene := agent.GenerateEntrance(ctx, firstTime)
 	printWelcomeCLI(label, entranceScene, firstTime)
 
-	rl, err := readline.NewEx(&readline.Config{
-		Prompt:          "修行者 › ",
-		HistoryLimit:    100,
-		InterruptPrompt: "^C",
-		EOFPrompt:       "exit",
-	})
-	if err != nil {
-		return fmt.Errorf("初始化输入行失败: %w", err)
-	}
-	defer rl.Close()
+	line := liner.NewLiner()
+	line.SetCtrlCAborts(true)
+	defer line.Close()
 
 	var history []*schema.Message
 
 	for {
-		raw, err := rl.Readline()
+		raw, err := line.Prompt("修行者 › ")
 		if err != nil {
+			// Ctrl+C 或 EOF
 			break
 		}
 		input := strings.TrimSpace(raw)
@@ -164,8 +158,9 @@ func runChatCLI(ctx context.Context) error {
 			continue
 		}
 		history = newHistory
+		line.AppendHistory(input)
 		fmt.Println(strings.Repeat("─", 60))
-		fmt.Fprintln(rl.Stdout())
+		fmt.Println()
 	}
 
 	return nil
