@@ -86,6 +86,7 @@ func initConfig() {
 			viper.AddConfigPath(filepath.Join(home, ".lizhu"))
 		}
 	}
+	viper.SetEnvPrefix("LIZHU") // 只响应 LIZHU_* 前缀的环境变量，避免 USER 等系统变量污染 user.name 等嵌套键
 	viper.AutomaticEnv()
 	if err := viper.ReadInConfig(); err != nil {
 		fmt.Fprintf(os.Stderr, "[提示] 未读取到配置文件，将使用默认值（%v）\n", err)
