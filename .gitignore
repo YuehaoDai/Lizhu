@@ -31,3 +31,8 @@ coverage.out
 
 # 测试缓存
 testdata/tmp/
+
+# 笔记（个人内容，不提交到仓库）
+# 保留目录结构（.gitkeep）和 README，忽略实际笔记内容
+notes/**/*.md
+!notes/README.md

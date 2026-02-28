@@ -19,10 +19,13 @@ milvus:
   enabled: false            # 设为 true 启用 RAG 知识库（需先启动 Milvus）
   address: "localhost:19530"
   collection: "lizhu_knowledge"
-  embedding_model: "text-embedding-3-small"
+  embedding_model: "text-embedding-v2"     # 百炼平台推荐，1536维；OpenAI官方可用 text-embedding-3-small
 
 worldview:
   path: "./configs/worldview"   # 世界观 YAML 配置目录
+
+notes:
+  path: "./notes"               # 修行笔记根目录（lizhu note add 的默认搜索路径）
 
 user:
   name: "修行者"             # 你的道号
