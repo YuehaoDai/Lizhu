@@ -106,6 +106,62 @@ lizhu note list           # 列出已索引文件（二期）
 
 ---
 
+## 护道人人格配置
+
+护道人默认以无名状态出现，你可以在 `lizhu.yaml` 中配置人格，让护道人化身为《剑来》中的特定角色，带来专属的说话风格与语料。
+
+### 启用齐静春人格
+
+```yaml
+guardian:
+  persona_id: "qi_jingchun"   # 人格ID，对应 configs/worldview/ 中的 persona_xxx.yaml
+  persona_name: "齐静春"       # 对话框显示名称
+```
+
+启用后，对话提示符变为 `护道人·齐静春 ›`，系统 Prompt 自动注入齐静春的说话风格语料（儒家文圣亲传弟子，温润如玉，循循善诱）。
+
+### 关闭人格（无名护道人）
+
+```yaml
+guardian:
+  persona_id: ""
+  persona_name: ""
+```
+
+### 内置人格列表
+
+| persona_id | 人物 | 风格描述 |
+|---|---|---|
+| `qi_jingchun` | 齐静春 | 儒家文圣弟子，温润如玉，春风化雨，循循善诱 |
+
+### 自定义人格（无需改代码）
+
+1. 在 `configs/worldview/` 下新建 `persona_xxx.yaml`：
+
+```yaml
+section_id: "persona_xxx"
+section_title: "护道人人格：某角色"
+order: 5
+persona_id: "xxx"          # 自定义唯一ID
+content: |
+  ========================
+  【护道人人格设定：某角色】
+  ========================
+  （填写角色背景、说话风格、经典语句等语料）
+```
+
+2. 在 `lizhu.yaml` 中配置：
+
+```yaml
+guardian:
+  persona_id: "xxx"
+  persona_name: "角色显示名"
+```
+
+3. 重新编译或重启即生效，无需改任何代码。
+
+---
+
 ## 架构概览
 
 ```
