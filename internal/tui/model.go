@@ -58,8 +58,9 @@ type Model struct {
 
 	// viewport 原始内容（累积）
 	content string
-	// 当前流式回复缓冲（不含 <eval_json> 之后的部分）
-	streamBuf   strings.Builder
+	// 当前流式回复缓冲（不含 <eval_json> 之后的部分）。
+	// 使用指针避免 Bubble Tea 按值传递 Model 时 strings.Builder 被拷贝而 panic。
+	streamBuf   *strings.Builder
 	evalTagSeen bool
 
 	// 流式通道（每次对话新建）
@@ -110,6 +111,7 @@ func New(cfg Config) Model {
 		spinner:       sp,
 		state:         stateIdle,
 		content:       welcome,
+		streamBuf:     &strings.Builder{},
 	}
 }
 
