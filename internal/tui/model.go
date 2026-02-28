@@ -180,7 +180,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.history = msg.newHistory
 			m.lastErr = ""
-			// 持久化已完成的流式内容
 			divider := "\n" + strings.Repeat("─", 60) + "\n\n"
 			m.appendContent(m.streamBuf.String() + divider)
 		}
@@ -217,14 +216,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // ---- 内部辅助 ----
 
 // relayout 调整各组件尺寸。
+// 实际渲染行数 = 1(header) + 1(sep) + 1(border-top) + vpH + 1(border-bot)
+//               + 1(sep) + 5(inputStyle=textarea3+border2) + 1(\n) + 1(hint)
+//             = vpH + 12
+// 因此 vpH = m.height - 12，viewport 宽度需减去 borderStyle 左右各 1 字符。
 func (m *Model) relayout() {
-	headerH := 3
-	footerH := 5
-	vpH := m.height - headerH - footerH
+	const overhead = 12
+	vpH := m.height - overhead
 	if vpH < 5 {
 		vpH = 5
 	}
-	m.viewport.Width = m.width
+	m.viewport.Width = m.width - 2 // 减去 borderStyle 左右边框
 	m.viewport.Height = vpH
 	m.textarea.SetWidth(m.width - 4)
 	m.viewport.SetContent(m.content)
