@@ -233,8 +233,13 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 		return reply, newHistory, nil
 	}
 
-	// ── Mode B：普通护道对话，全量流式输出，无 eval_json ──
+	// ── Mode B：普通护道对话，全量流式输出 ──
+	// LLM 有时仍会生成 <eval_json> 块，用滑动缓冲区在触发前截断，保证输出干净。
 	defer stream.Close()
+	var modeBBuf strings.Builder
+	modeBSuppressed := false
+	const modeBTrig = "<eval_json>"
+	const modeBWin = len(modeBTrig) - 1
 	for {
 		chunk, err := stream.Recv()
 		if err != nil {
@@ -247,8 +252,40 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 		if token == "" {
 			continue
 		}
-		onToken(token)
-		fullReply.WriteString(token)
+		if modeBSuppressed {
+			continue
+		}
+		modeBBuf.WriteString(token)
+		s := modeBBuf.String()
+		if idx := strings.Index(s, modeBTrig); idx >= 0 {
+			modeBSuppressed = true
+			// 从触发行的行首截断
+			printUntil := idx
+			if nl := strings.LastIndex(s[:idx], "\n"); nl >= 0 {
+				printUntil = nl + 1
+			}
+			visible := s[:printUntil]
+			if visible != "" {
+				onToken(visible)
+				fullReply.WriteString(visible)
+			}
+			modeBBuf.Reset()
+			continue
+		}
+		// 保留末尾预警窗口，安全部分直接输出
+		safe := len(s) - modeBWin
+		if safe > 0 {
+			onToken(s[:safe])
+			fullReply.WriteString(s[:safe])
+			tail := s[safe:]
+			modeBBuf.Reset()
+			modeBBuf.WriteString(tail)
+		}
+	}
+	// 流结束，刷出缓冲区剩余（未触发则全部输出）
+	if !modeBSuppressed && modeBBuf.Len() > 0 {
+		onToken(modeBBuf.String())
+		fullReply.WriteString(modeBBuf.String())
 	}
 
 	reply := fullReply.String()
