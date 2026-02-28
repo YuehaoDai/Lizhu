@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
+	"github.com/YuehaoDai/lizhu/internal/agent/librarian"
+	"github.com/YuehaoDai/lizhu/internal/knowledge"
+	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
+	"github.com/YuehaoDai/lizhu/internal/worldview"
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
-	"github.com/YuehaoDai/lizhu/internal/worldview"
 )
 
 // Config 护道人 Agent 配置。
@@ -34,14 +37,18 @@ type Config struct {
 	PersonaName string // 显示名称，用于 UI 展示
 	// 会话
 	HistoryWindow int // 注入的历史摘要数量
+	// RAG 知识库（可选，Enabled=false 时跳过检索）
+	KnowledgeCfg knowledge.Config
 }
 
 // Agent 护道人智能体。
 type Agent struct {
-	cfg    Config
-	model  model.ChatModel
-	loader *worldview.Loader
-	repo   *episodic.Repository
+	cfg       Config
+	model     model.ChatModel
+	loader    *worldview.Loader
+	repo      *episodic.Repository
+	retriever *knowledge.Retriever
+	librarian *librarian.Agent
 }
 
 // PersonaName 返回护道人显示名称（空字符串表示使用默认"护道人"）。
@@ -53,17 +60,70 @@ func New(ctx context.Context, cfg Config, repo *episodic.Repository) (*Agent, er
 	if err != nil {
 		return nil, fmt.Errorf("guardian: init model: %w", err)
 	}
+
+	// 若 RAG 已启用，快速探测 Milvus 连通性（3 秒超时）。
+	// 不可达时自动降级为禁用，避免每次对话都打印超时警告。
+	if cfg.KnowledgeCfg.Enabled {
+		probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		if err := knowledge.ProbeMilvus(probeCtx, cfg.KnowledgeCfg.Address); err != nil {
+			fmt.Printf("[知识库] Milvus 不可达（%v），本次会话禁用 RAG。\n", err)
+			cfg.KnowledgeCfg.Enabled = false
+		} else {
+			fmt.Println("[知识库] Milvus 连接正常，RAG 已启用。")
+		}
+	}
+
+	libAgent, err := librarian.New(ctx, librarian.Config{
+		APIKey:  cfg.APIKey,
+		Model:   cfg.Model,
+		BaseURL: cfg.BaseURL,
+	})
+	if err != nil {
+		// Librarian 初始化失败不应阻断主流程，降级为 nil（persistSession 会回退到截断摘要）
+		fmt.Printf("[警告] 知识整理官初始化失败，会话摘要将使用截断文本: %v\n", err)
+		libAgent = nil
+	}
+
 	return &Agent{
-		cfg:    cfg,
-		model:  m,
-		loader: worldview.NewLoader(cfg.WorldViewDir),
-		repo:   repo,
+		cfg:       cfg,
+		model:     m,
+		loader:    worldview.NewLoader(cfg.WorldViewDir),
+		repo:      repo,
+		retriever: knowledge.NewRetriever(cfg.KnowledgeCfg),
+		librarian: libAgent,
 	}, nil
 }
 
-// Chat 处理一轮对话（非流式）：构建上下文 → 调用 LLM → 解析结果 → 持久化。
-func (a *Agent) Chat(ctx context.Context, history []*schema.Message, userInput string) (string, []*schema.Message, error) {
-	systemMsg, err := a.buildSystemMessage(ctx)
+// GenerateEntrance 调用 LLM 生成护道人出场场景描写。
+// 若该人格未配置 entrance_prompt，或 LLM 调用失败，返回空字符串（调用方应优雅降级）。
+func (a *Agent) GenerateEntrance(ctx context.Context, firstTime bool) string {
+	entrancePrompt, err := a.loader.LoadEntrancePrompt(a.cfg.PersonaID)
+	if err != nil || entrancePrompt == "" {
+		return ""
+	}
+
+	scenario := "修行者再次前来拜访，护道人正在做某件日常之事，请生成一段他的出场场景描写。"
+	if firstTime {
+		scenario = "修行者初次前来拜访，护道人正在做某件日常之事，请生成一段他的出场场景描写，略带初见的意味。"
+	}
+
+	genCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	resp, err := a.model.Generate(genCtx, []*schema.Message{
+		schema.SystemMessage(entrancePrompt),
+		schema.UserMessage(scenario),
+	})
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(resp.Content)
+}
+
+// Chat 处理一轮对话（非流式）。assess=true 时进入评估模式（生成 eval_json）。
+func (a *Agent) Chat(ctx context.Context, history []*schema.Message, userInput string, assess bool) (string, []*schema.Message, error) {
+	systemMsg, err := a.buildSystemMessage(ctx, userInput, assess)
 	if err != nil {
 		return "", nil, fmt.Errorf("build system message: %w", err)
 	}
@@ -75,8 +135,14 @@ func (a *Agent) Chat(ctx context.Context, history []*schema.Message, userInput s
 	}
 	reply := resp.Content
 
-	if err := a.persistEvaluation(ctx, reply, userInput); err != nil {
-		fmt.Printf("[警告] 修行档案持久化失败: %v\n", err)
+	if assess {
+		if err := a.persistEvaluation(ctx, reply); err != nil {
+			fmt.Printf("[警告] 修行档案持久化失败: %v\n", err)
+		}
+	} else {
+		if err := a.persistSession(ctx, userInput, reply); err != nil {
+			fmt.Printf("[警告] 会话记录保存失败: %v\n", err)
+		}
 	}
 
 	newHistory := append(history,
@@ -86,9 +152,15 @@ func (a *Agent) Chat(ctx context.Context, history []*schema.Message, userInput s
 	return reply, newHistory, nil
 }
 
-// ChatStream 处理一轮对话（流式）：逐 token 回调 onToken，返回完整回复与新历史。
-func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userInput string, onToken func(string)) (string, []*schema.Message, error) {
-	systemMsg, err := a.buildSystemMessage(ctx)
+// ChatStream 处理一轮对话（流式）。assess=true 时进入评估模式（生成 eval_json）。
+//
+// Mode B（assess=false）：系统提示不含 eval_json 指令，LLM 不会生成结构化块，
+// 流式 token 全部透传给 onToken，流结束后保存轻量级会话记录。
+//
+// Mode A（assess=true）：系统提示含完整评估指令，检测到 <eval_json 后立即返回
+// 控制权，剩余 token 由后台 goroutine 消费并持久化，避免用户感知延迟。
+func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userInput string, onToken func(string), assess bool) (string, []*schema.Message, error) {
+	systemMsg, err := a.buildSystemMessage(ctx, userInput, assess)
 	if err != nil {
 		return "", nil, fmt.Errorf("build system message: %w", err)
 	}
@@ -98,9 +170,76 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 	if err != nil {
 		return "", nil, fmt.Errorf("llm stream: %w", err)
 	}
-	defer stream.Close()
 
 	var fullReply strings.Builder
+
+	if assess {
+		// ── Mode A：评估模式，检测 eval_json 并后台持久化 ──
+		for {
+			chunk, err := stream.Recv()
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				stream.Close()
+				return "", nil, fmt.Errorf("stream recv: %w", err)
+			}
+			token := chunk.Content
+			if token == "" {
+				continue
+			}
+			onToken(token)
+			fullReply.WriteString(token)
+
+			// 检测到 eval_json 段落起始（标题行或标签本身）：可见文字已完整，交给后台 goroutine
+			replyStr := fullReply.String()
+			if !strings.Contains(replyStr, "<eval_json") && !strings.Contains(replyStr, "修行档案JSON") {
+				continue
+			}
+
+			visibleReply := fullReply.String()
+			go func() {
+				defer stream.Close()
+				var tail strings.Builder
+				for {
+					c, e := stream.Recv()
+					if e != nil {
+						break
+					}
+					tail.WriteString(c.Content)
+				}
+				if perr := a.persistEvaluation(context.Background(), visibleReply+tail.String()); perr != nil {
+					fmt.Printf("[警告] 修行档案持久化失败: %v\n", perr)
+				}
+			}()
+
+			newHistory := append(history,
+				schema.UserMessage(userInput),
+				schema.AssistantMessage(visibleReply, nil),
+			)
+			return visibleReply, newHistory, nil
+		}
+
+		// 降级路径：eval_json 未出现（通常不应走到此处）
+		reply := fullReply.String()
+		stream.Close()
+		if err := a.persistEvaluation(ctx, reply); err != nil {
+			fmt.Printf("[警告] 修行档案持久化失败: %v\n", err)
+		}
+		newHistory := append(history,
+			schema.UserMessage(userInput),
+			schema.AssistantMessage(reply, nil),
+		)
+		return reply, newHistory, nil
+	}
+
+	// ── Mode B：普通护道对话，全量流式输出 ──
+	// LLM 有时仍会生成 <eval_json> 块，用滑动缓冲区在触发前截断，保证输出干净。
+	defer stream.Close()
+	var modeBBuf strings.Builder
+	modeBSuppressed := false
+	const modeBTrig = "<eval_json>"
+	const modeBWin = len(modeBTrig) - 1
 	for {
 		chunk, err := stream.Recv()
 		if err != nil {
@@ -110,18 +249,49 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 			return "", nil, fmt.Errorf("stream recv: %w", err)
 		}
 		token := chunk.Content
-		if token != "" {
-			onToken(token)
-			fullReply.WriteString(token)
+		if token == "" {
+			continue
 		}
+		if modeBSuppressed {
+			continue
+		}
+		modeBBuf.WriteString(token)
+		s := modeBBuf.String()
+		if idx := strings.Index(s, modeBTrig); idx >= 0 {
+			modeBSuppressed = true
+			// 从触发行的行首截断
+			printUntil := idx
+			if nl := strings.LastIndex(s[:idx], "\n"); nl >= 0 {
+				printUntil = nl + 1
+			}
+			visible := s[:printUntil]
+			if visible != "" {
+				onToken(visible)
+				fullReply.WriteString(visible)
+			}
+			modeBBuf.Reset()
+			continue
+		}
+		// 保留末尾预警窗口，安全部分直接输出
+		safe := len(s) - modeBWin
+		if safe > 0 {
+			onToken(s[:safe])
+			fullReply.WriteString(s[:safe])
+			tail := s[safe:]
+			modeBBuf.Reset()
+			modeBBuf.WriteString(tail)
+		}
+	}
+	// 流结束，刷出缓冲区剩余（未触发则全部输出）
+	if !modeBSuppressed && modeBBuf.Len() > 0 {
+		onToken(modeBBuf.String())
+		fullReply.WriteString(modeBBuf.String())
 	}
 
 	reply := fullReply.String()
-
-	if err := a.persistEvaluation(ctx, reply, userInput); err != nil {
-		fmt.Printf("[警告] 修行档案持久化失败: %v\n", err)
+	if err := a.persistSession(ctx, userInput, reply); err != nil {
+		fmt.Printf("[警告] 会话记录保存失败: %v\n", err)
 	}
-
 	newHistory := append(history,
 		schema.UserMessage(userInput),
 		schema.AssistantMessage(reply, nil),
@@ -129,10 +299,11 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 	return reply, newHistory, nil
 }
 
-// buildSystemMessage 构建包含世界观 + 用户档案 + 历史摘要的系统消息。
-func (a *Agent) buildSystemMessage(ctx context.Context) (string, error) {
+// buildSystemMessage 构建包含世界观 + 用户档案 + 历史摘要 + RAG 知识的系统消息。
+// assess=true 时加载含 eval_json 指令的评估节；assess=false 时跳过，保持纯对话。
+func (a *Agent) buildSystemMessage(ctx context.Context, userInput string, assess bool) (string, error) {
 	// 世界观系统提示（透传人格ID，加载对应语料）
-	worldviewPrompt, err := a.loader.BuildSystemPrompt(a.cfg.ActivePath, a.cfg.PersonaID)
+	worldviewPrompt, err := a.loader.BuildSystemPrompt(a.cfg.ActivePath, a.cfg.PersonaID, assess)
 	if err != nil {
 		return "", err
 	}
@@ -157,7 +328,33 @@ func (a *Agent) buildSystemMessage(ctx context.Context) (string, error) {
 
 	contextBlock := buildContextBlock(a.cfg.UserName, profile, sessions, toolMastery)
 
-	return worldviewPrompt + "\n\n" + contextBlock, nil
+	// 知识库笔记摘要：让护道人始终了解用户已学习过的主题
+	knowledgeFiles, _ := a.repo.ListKnowledgeFiles(ctx, a.cfg.UserID)
+	knowledgeSummaryBlock := buildKnowledgeSummaryBlock(knowledgeFiles)
+
+	// RAG 知识检索（仅当 Milvus 启用且用户输入非空时）
+	// 使用独立的 5 秒超时 context，避免 Milvus/embedding 无响应时阻塞对话
+	ragBlock := ""
+	if a.cfg.KnowledgeCfg.Enabled && userInput != "" {
+		ragCtx, ragCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer ragCancel()
+		chunks, err := a.retriever.Search(ragCtx, userInput, 3)
+		if err != nil {
+			// RAG 失败不阻塞对话，仅打印警告
+			fmt.Printf("[警告] 知识库检索失败: %v\n", err)
+		} else if len(chunks) > 0 {
+			ragBlock = buildRAGBlock(chunks)
+		}
+	}
+
+	parts := []string{worldviewPrompt, contextBlock}
+	if knowledgeSummaryBlock != "" {
+		parts = append(parts, knowledgeSummaryBlock)
+	}
+	if ragBlock != "" {
+		parts = append(parts, ragBlock)
+	}
+	return strings.Join(parts, "\n\n"), nil
 }
 
 // buildMessages 组装 [system, ...history, user] 消息列表。

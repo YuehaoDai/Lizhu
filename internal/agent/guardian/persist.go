@@ -3,13 +3,14 @@ package guardian
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
 )
 
 // persistEvaluation 解析 LLM 响应中的评估 JSON，
 // 更新修行档案、保存会话记录、更新法器谱。
-func (a *Agent) persistEvaluation(ctx context.Context, response, userInput string) error {
+func (a *Agent) persistEvaluation(ctx context.Context, response string) error {
 	eval, err := ParseEvalResult(response)
 	if err != nil {
 		return fmt.Errorf("parse eval json: %w", err)
@@ -87,6 +88,41 @@ func (a *Agent) persistEvaluation(ctx context.Context, response, userInput strin
 		}
 	}
 	return nil
+}
+
+// persistSession 在普通护道对话（Mode B）结束后保存轻量级会话记录。
+// 不含评估分数，仅记录会话发生（用于"初次相见"逻辑与历史摘要注入）。
+func (a *Agent) persistSession(ctx context.Context, userInput, reply string) error {
+	var summary string
+
+	// 优先调用 Librarian 生成真正的语义摘要
+	if a.librarian != nil {
+		sumCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		s, err := a.librarian.SummarizeSession(sumCtx, a.cfg.UserName, userInput, reply)
+		if err == nil && s != "" {
+			summary = s
+		} else {
+			fmt.Printf("[警告] 会话摘要生成失败，回退到截断文本: %v\n", err)
+		}
+	}
+
+	// 降级：Librarian 不可用时截取回复前 80 字
+	if summary == "" {
+		runes := []rune(reply)
+		summary = string(runes)
+		if len(runes) > 80 {
+			summary = string(runes[:80]) + "……"
+		}
+	}
+
+	session := &episodic.Session{
+		UserID:          a.cfg.UserID,
+		Summary:         summary,
+		XinMoIdentified: []string{},
+		RawResponse:     reply,
+	}
+	return a.repo.SaveSession(ctx, session)
 }
 
 // zeroIfNeg 将负数归零，用于过滤模式 B 中填写的 -1 占位值。

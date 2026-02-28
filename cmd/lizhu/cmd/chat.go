@@ -8,7 +8,6 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/cloudwego/eino/schema"
-	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
 	"github.com/spf13/cobra"
 )
 
@@ -16,16 +15,14 @@ var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "与护道人开始修行对话",
 	Long: `启动与护道人的交互式对话。
-护道人将根据你的描述评估修行境界、给出破境路径、更新修行档案。
 
 输入 /quit 或 /exit 结束对话，/clear 清空本次会话历史，/status 查看当前档案。`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runChat(cmd.Context())
+		return runChatCLI(cmd.Context())
 	},
 }
 
 // guardianLabel 返回护道人的显示名称。
-// personaName 非空时返回 "护道人·<personaName>"，否则返回 "护道人"。
 func guardianLabel(personaName string) string {
 	if personaName != "" {
 		return "护道人·" + personaName
@@ -33,7 +30,9 @@ func guardianLabel(personaName string) string {
 	return "护道人"
 }
 
-func runChat(ctx context.Context) error {
+// ---- CLI 模式 ----
+
+func runChatCLI(ctx context.Context) error {
 	agent, err := newGuardianAgent(ctx)
 	if err != nil {
 		return err
@@ -41,12 +40,10 @@ func runChat(ctx context.Context) error {
 
 	label := guardianLabel(agent.PersonaName())
 
-	profile, err := repo.GetOrCreateProfile(ctx, "default")
-	if err != nil {
-		return fmt.Errorf("读取修行档案失败: %w", err)
-	}
-
-	printWelcome(profile, label)
+	priorSessions, _ := repo.GetRecentSessions(ctx, "default", 1)
+	firstTime := len(priorSessions) == 0
+	entranceScene := agent.GenerateEntrance(ctx, firstTime)
+	printWelcomeCLI(label, entranceScene, firstTime)
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:          "修行者 › ",
@@ -64,7 +61,6 @@ func runChat(ctx context.Context) error {
 	for {
 		raw, err := rl.Readline()
 		if err != nil {
-			// Ctrl+C 或 EOF → 正常退出
 			break
 		}
 		input := strings.TrimSpace(raw)
@@ -81,69 +77,151 @@ func runChat(ctx context.Context) error {
 			fmt.Println("[本次会话历史已清空]")
 			continue
 		case "/status":
-			printStatusInline(ctx)
+			printStatusInlineCLI(ctx)
 			continue
 		case "/help":
 			printChatHelp()
 			continue
-		case "/assess":
-			input = "[修行者请求完整境界评估] /assess"
-		}
+	case "/assess":
+		input = "[修行者请求完整境界评估] /assess"
+	}
 
-		fmt.Printf("\n%s › ", label)
-		fmt.Println()
+		assess := input == "[修行者请求完整境界评估] /assess"
+
+		fmt.Printf("\n%s › \n", label)
 		fmt.Println(strings.Repeat("─", 60))
 
-		// 流式输出：遇到 <eval_json> 标记前的内容实时显示，之后的 token 静默缓冲。
-		// <eval_json> 可能跨越 token 边界（标签头部已在 printed 中），
-		// 此时 idx < printed.Len()，须用 combined[printed.Len():idx]，避免切片越界。
-		var printed strings.Builder
-		evalTagSeen := false
-		_, newHistory, err := agent.ChatStream(ctx, history, input, func(token string) {
-			if evalTagSeen {
-				return
-			}
-			combined := printed.String() + token
-			if idx := strings.Index(combined, "<eval_json>"); idx >= 0 {
-				evalTagSeen = true
-				// 仅打印尚未输出的部分（idx 可能小于 printed.Len()，需下界保护）
-				if idx > printed.Len() {
-					fmt.Print(combined[printed.Len():idx])
+		var (
+			newHistory []*schema.Message
+			chatErr    error
+		)
+
+		if assess {
+			// 评估模式：LLM 会生成 eval_json（及其前的标题行），使用多触发器滑动缓冲区过滤。
+			// 触发器按优先级：先检测 "修行档案JSON"（标题行），再检测 "<eval_json>"（标签本身）。
+			// 检测到任一触发器时，从所在行的行首开始截断（不打印该行及之后的内容）。
+			suppressTriggers := []string{"修行档案JSON", "<eval_json>"}
+			maxTrigLen := 0
+			for _, t := range suppressTriggers {
+				if len(t) > maxTrigLen {
+					maxTrigLen = len(t)
 				}
-				return
 			}
-			fmt.Print(token)
-			printed.WriteString(token)
-		})
+			var buf strings.Builder
+			suppressed := false
+			_, newHistory, chatErr = agent.ChatStream(ctx, history, input, func(token string) {
+				if suppressed {
+					return
+				}
+				buf.WriteString(token)
+				s := buf.String()
+
+				// 检查是否命中任一触发器
+				hitIdx := -1
+				for _, trig := range suppressTriggers {
+					if idx := strings.Index(s, trig); idx >= 0 {
+						if hitIdx < 0 || idx < hitIdx {
+							hitIdx = idx
+						}
+					}
+				}
+				if hitIdx >= 0 {
+					suppressed = true
+					// 从行首截断：找到 hitIdx 之前最近的换行符
+					printUntil := hitIdx
+					if nl := strings.LastIndex(s[:hitIdx], "\n"); nl >= 0 {
+						printUntil = nl + 1 // 保留换行符本身，但不打印触发行
+					}
+					if printUntil > 0 {
+						fmt.Print(s[:printUntil])
+					}
+					buf.Reset()
+					return
+				}
+
+				// 保留末尾 maxTrigLen-1 字节作为预警窗口
+				safe := len(s) - (maxTrigLen - 1)
+				if safe > 0 {
+					fmt.Print(s[:safe])
+					tail := s[safe:]
+					buf.Reset()
+					buf.WriteString(tail)
+				}
+			}, true)
+			if !suppressed && buf.Len() > 0 {
+				fmt.Print(buf.String())
+			}
+		} else {
+			// 普通护道对话：LLM 不生成 eval_json，token 直接输出
+			_, newHistory, chatErr = agent.ChatStream(ctx, history, input, func(token string) {
+				fmt.Print(token)
+			}, false)
+		}
+
 		fmt.Println()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "\n[错误] %v\n", err)
+		if chatErr != nil {
+			fmt.Fprintf(os.Stderr, "\n[错误] %v\n", chatErr)
 			continue
 		}
 		history = newHistory
 		fmt.Println(strings.Repeat("─", 60))
-		fmt.Fprintln(rl.Stdout()) // 通过 readline 管理的输出流打印空行，避免 raw mode 下显示错乱
+		fmt.Fprintln(rl.Stdout())
 	}
 
 	return nil
 }
 
-func printWelcome(profile *episodic.Profile, label string) {
-	// 横幅宽度固定 50 字符，居中显示 label
+// termWidth 计算字符串的终端显示宽度（CJK 全角字符算 2 列，其余算 1 列）。
+func termWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		if r >= 0x1100 && (r <= 0x115F || // Hangul Jamo
+			r == 0x2329 || r == 0x232A ||
+			(r >= 0x2E80 && r <= 0x303E) || // CJK Radicals Supplement .. CJK Symbols
+			(r >= 0x3040 && r <= 0x33FF) || // Japanese
+			(r >= 0x3400 && r <= 0x4DBF) || // CJK Unified Ideographs Extension A
+			(r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
+			(r >= 0xA000 && r <= 0xA4CF) || // Yi
+			(r >= 0xAC00 && r <= 0xD7AF) || // Hangul Syllables
+			(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility Ideographs
+			(r >= 0xFE10 && r <= 0xFE1F) || // Vertical forms
+			(r >= 0xFE30 && r <= 0xFE4F) || // CJK Compatibility Forms
+			(r >= 0xFF00 && r <= 0xFF60) || // Fullwidth Forms
+			(r >= 0xFFE0 && r <= 0xFFE6) ||
+			(r >= 0x1F300 && r <= 0x1F64F) || // Misc Symbols and Pictographs
+			(r >= 0x20000 && r <= 0x2A6DF)) { // CJK Extension B
+			w += 2
+		} else {
+			w++
+		}
+	}
+	return w
+}
+
+func printWelcomeCLI(label, entranceScene string, firstTime bool) {
+	const borderWidth = 52 // ╔ + 50×═ + ╗
 	bannerText := "骊珠 · " + label + " 已就位"
+	textW := termWidth(bannerText)
+	leftPad := (borderWidth - textW) / 2
+	if leftPad < 0 {
+		leftPad = 0
+	}
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════════╗")
-	fmt.Printf("║  %-46s  ║\n", bannerText)
+	fmt.Printf("%s%s\n", strings.Repeat(" ", leftPad), bannerText)
 	fmt.Println("╚══════════════════════════════════════════════════╝")
 	fmt.Println()
 
-	if profile.GoLianqiScore > 0 || profile.AILianqiScore > 0 {
-		fmt.Printf("%s已读取修行档案，可直接继续上次修行。\n", label)
-		printProfileSummary(profile)
+	if entranceScene != "" {
+		// LLM 生成的场景描写：散文叙述，整段输出
+		fmt.Println(entranceScene)
 	} else {
-		fmt.Printf("这是你第一次与%s相见。\n", label)
-		fmt.Println("请先描述你的技术背景、工作经历与当前在学的内容，")
-		fmt.Printf("%s将进行初次境界诊断并建立修行档案。\n", label)
+		// 降级：未配置或生成失败时显示简短提示
+		if firstTime {
+			fmt.Printf("%s：初次相见，且坐，你且说说看。\n", label)
+		} else {
+			fmt.Printf("%s：来了，坐。\n", label)
+		}
 	}
 	fmt.Println("\n输入 /help 查看可用命令。")
 	fmt.Println()
@@ -160,7 +238,7 @@ func printChatHelp() {
 `)
 }
 
-func printStatusInline(ctx context.Context) {
+func printStatusInlineCLI(ctx context.Context) {
 	if repo == nil {
 		fmt.Println("[错误] 仓库未初始化")
 		return
@@ -170,20 +248,20 @@ func printStatusInline(ctx context.Context) {
 		fmt.Fprintf(os.Stderr, "读取档案失败: %v\n", err)
 		return
 	}
-	printProfileSummary(p)
-}
-
-// filterEvalJSON 从显示文本中移除 <eval_json>...</eval_json> 块。
-func filterEvalJSON(text string) string {
-	start := strings.Index(text, "<eval_json>")
-	end := strings.Index(text, "</eval_json>")
-	if start < 0 || end < 0 || end < start {
-		return text
+	fmt.Println()
+	fmt.Println("── 修行档案 ──────────────────────────────────────")
+	if p.GoLianqiScore > 0 || p.ActivePath == "go" || p.ActivePath == "both" {
+		fmt.Printf("  Go练气士  : %s %d/100  第%d境·%s\n",
+			renderBar(p.GoLianqiScore), p.GoLianqiScore,
+			p.GoLianqiLevel, p.GoLianqiLevelName)
 	}
-	before := strings.TrimRight(text[:start], "\n ")
-	after := strings.TrimLeft(text[end+len("</eval_json>"):], "\n ")
-	if after == "" {
-		return before
+	if p.AILianqiScore > 0 || p.ActivePath == "ai" || p.ActivePath == "both" {
+		fmt.Printf("  AI练气士  : %s %d/100  第%d境·%s\n",
+			renderBar(p.AILianqiScore), p.AILianqiScore,
+			p.AILianqiLevel, p.AILianqiLevelName)
 	}
-	return before + "\n" + after
+	fmt.Printf("  武夫      : %s %d/100  第%d境·%s\n",
+		renderBar(p.WufuScore), p.WufuScore,
+		p.WufuLevel, p.WufuLevelName)
+	fmt.Println("───────────────────────────────────────────────────")
 }

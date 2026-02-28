@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/YuehaoDai/lizhu/internal/agent/guardian"
+	"github.com/YuehaoDai/lizhu/internal/knowledge"
 	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
 	"github.com/YuehaoDai/lizhu/internal/storage"
 	"github.com/YuehaoDai/lizhu/internal/worldview"
@@ -14,6 +15,25 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+// buildIngesterConfig 从 viper 读取知识库配置（note.go 和 root.go 共用）。
+func buildIngesterConfig() knowledge.Config {
+	cfg := knowledge.Config{
+		Enabled:        viper.GetBool("milvus.enabled"),
+		Address:        viper.GetString("milvus.address"),
+		Collection:     viper.GetString("milvus.collection"),
+		EmbeddingModel: viper.GetString("milvus.embedding_model"),
+		BaseURL:        viper.GetString("llm.base_url"),
+		APIKey:         viper.GetString("llm.api_key"),
+	}
+	if cfg.Address == "" {
+		cfg.Address = "localhost:19530"
+	}
+	if cfg.Collection == "" {
+		cfg.Collection = "lizhu_knowledge"
+	}
+	return cfg
+}
 
 var (
 	cfgFile string
@@ -66,6 +86,7 @@ func initConfig() {
 			viper.AddConfigPath(filepath.Join(home, ".lizhu"))
 		}
 	}
+	viper.SetEnvPrefix("LIZHU") // 只响应 LIZHU_* 前缀的环境变量，避免 USER 等系统变量污染 user.name 等嵌套键
 	viper.AutomaticEnv()
 	if err := viper.ReadInConfig(); err != nil {
 		fmt.Fprintf(os.Stderr, "[提示] 未读取到配置文件，将使用默认值（%v）\n", err)
@@ -150,6 +171,7 @@ func newGuardianAgent(ctx context.Context) (*guardian.Agent, error) {
 		PersonaID:     viper.GetString("guardian.persona_id"),
 		PersonaName:   viper.GetString("guardian.persona_name"),
 		HistoryWindow: historyWindow,
+		KnowledgeCfg:  buildIngesterConfig(),
 	}
 	return guardian.New(ctx, cfg, repo)
 }
