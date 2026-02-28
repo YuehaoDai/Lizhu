@@ -82,7 +82,9 @@ func runChat(ctx context.Context) error {
 		fmt.Println()
 		fmt.Println(strings.Repeat("─", 60))
 
-		// 流式输出：遇到 <eval_json> 标记前的内容实时显示，之后的 token 静默缓冲
+		// 流式输出：遇到 <eval_json> 标记前的内容实时显示，之后的 token 静默缓冲。
+		// <eval_json> 可能跨越 token 边界（标签头部已在 printed 中），
+		// 此时 idx < printed.Len()，须用 combined[printed.Len():idx]，避免切片越界。
 		var printed strings.Builder
 		evalTagSeen := false
 		_, newHistory, err := agent.ChatStream(ctx, history, input, func(token string) {
@@ -92,10 +94,10 @@ func runChat(ctx context.Context) error {
 			combined := printed.String() + token
 			if idx := strings.Index(combined, "<eval_json>"); idx >= 0 {
 				evalTagSeen = true
-				visible := combined[:idx]
-				fmt.Print(visible[printed.Len():])
-				printed.Reset()
-				printed.WriteString(visible)
+				// 仅打印尚未输出的部分（idx 可能小于 printed.Len()，需下界保护）
+				if idx > printed.Len() {
+					fmt.Print(combined[printed.Len():idx])
+				}
 				return
 			}
 			fmt.Print(token)
