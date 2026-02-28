@@ -1,12 +1,12 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/chzyer/readline"
 	"github.com/cloudwego/eino/schema"
 	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
 	"github.com/spf13/cobra"
@@ -48,23 +48,33 @@ func runChat(ctx context.Context) error {
 
 	printWelcome(profile, label)
 
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:          "修行者 › ",
+		HistoryLimit:    100,
+		InterruptPrompt: "^C",
+		EOFPrompt:       "exit",
+	})
+	if err != nil {
+		return fmt.Errorf("初始化输入行失败: %w", err)
+	}
+	defer rl.Close()
+
 	var history []*schema.Message
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 64*1024), 64*1024)
 
 	for {
-		fmt.Print("\n修行者 › ")
-		if !scanner.Scan() {
+		raw, err := rl.Readline()
+		if err != nil {
+			// Ctrl+C 或 EOF → 正常退出
 			break
 		}
-		input := strings.TrimSpace(scanner.Text())
+		input := strings.TrimSpace(raw)
 		if input == "" {
 			continue
 		}
 
 		switch input {
 		case "/quit", "/exit", "/q":
-			fmt.Printf("\n%s：修行路漫漫，保重。\n", label)
+			fmt.Printf("%s：修行路漫漫，保重。\n", label)
 			return nil
 		case "/clear":
 			history = nil
@@ -112,9 +122,10 @@ func runChat(ctx context.Context) error {
 		}
 		history = newHistory
 		fmt.Println(strings.Repeat("─", 60))
+		fmt.Fprintln(rl.Stdout()) // 通过 readline 管理的输出流打印空行，避免 raw mode 下显示错乱
 	}
 
-	return scanner.Err()
+	return nil
 }
 
 func printWelcome(profile *episodic.Profile, label string) {
