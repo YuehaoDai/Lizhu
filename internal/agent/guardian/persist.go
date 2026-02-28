@@ -9,7 +9,7 @@ import (
 
 // persistEvaluation 解析 LLM 响应中的评估 JSON，
 // 更新修行档案、保存会话记录、更新法器谱。
-func (a *Agent) persistEvaluation(ctx context.Context, response, userInput string) error {
+func (a *Agent) persistEvaluation(ctx context.Context, response string) error {
 	eval, err := ParseEvalResult(response)
 	if err != nil {
 		return fmt.Errorf("parse eval json: %w", err)

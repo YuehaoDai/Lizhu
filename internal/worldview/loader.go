@@ -71,6 +71,24 @@ func (l *Loader) BuildSystemPrompt(path ActivePath, personaID string) (string, e
 	return strings.TrimSpace(sb.String()), nil
 }
 
+// LoadEntrancePrompt 返回指定人格的出场描写生成系统提示。
+// 若该人格未配置 entrance_prompt，返回空字符串。
+func (l *Loader) LoadEntrancePrompt(personaID string) (string, error) {
+	if personaID == "" {
+		return "", nil
+	}
+	sections, err := l.loadAll()
+	if err != nil {
+		return "", fmt.Errorf("worldview: load sections: %w", err)
+	}
+	for _, s := range sections {
+		if s.PersonaID == personaID && s.EntrancePrompt != "" {
+			return s.EntrancePrompt, nil
+		}
+	}
+	return "", nil
+}
+
 // loadAll 读取目录下所有 .yaml / .yml 文件并解析为 Section。
 func (l *Loader) loadAll() ([]Section, error) {
 	entries, err := os.ReadDir(l.dir)

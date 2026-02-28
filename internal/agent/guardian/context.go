@@ -2,8 +2,10 @@ package guardian
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
+	"github.com/YuehaoDai/lizhu/internal/knowledge"
 	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
 )
 
@@ -86,4 +88,39 @@ func ifEmpty(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// buildKnowledgeSummaryBlock 将用户已入库的笔记摘要注入上下文，
+// 让护道人始终了解用户系统性学习过哪些主题，即使当前对话未涉及。
+func buildKnowledgeSummaryBlock(files []*episodic.KnowledgeFile) string {
+	if len(files) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("========================\n")
+	sb.WriteString("【修行者知识库（已索引笔记，代表修行者已系统学习的主题）】\n")
+	sb.WriteString("========================\n\n")
+	for _, f := range files {
+		name := filepath.Base(f.FilePath)
+		if f.Summary != "" {
+			sb.WriteString(fmt.Sprintf("- %s：%s\n", name, f.Summary))
+		} else {
+			sb.WriteString(fmt.Sprintf("- %s（暂无摘要）\n", name))
+		}
+	}
+	sb.WriteString("\n以上为修行者主动整理入库的学习笔记，评估时应纳入参考，说明其对这些主题有过系统学习。\n")
+	return sb.String()
+}
+
+// buildRAGBlock 将检索到的知识块格式化为系统提示中的参考资料节。
+func buildRAGBlock(chunks []knowledge.SearchResult) string {
+	var sb strings.Builder
+	sb.WriteString("========================\n")
+	sb.WriteString("【修行参考资料（来自知识库，仅供参考）】\n")
+	sb.WriteString("========================\n\n")
+	for i, c := range chunks {
+		sb.WriteString(fmt.Sprintf("参考资料 %d（来源：%s）：\n%s\n\n", i+1, c.FilePath, c.Text))
+	}
+	sb.WriteString("以上为从知识库检索到的相关内容，请结合修行者当前描述综合评估。\n")
+	return sb.String()
 }

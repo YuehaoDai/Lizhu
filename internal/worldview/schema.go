@@ -12,6 +12,9 @@ type Section struct {
 	// 空字符串表示所有人格均包含；非空时只有与配置匹配的人格才包含该节。
 	PersonaID string `yaml:"persona_id"`
 	Content   string `yaml:"content"`
+	// EntrancePrompt 是专用于生成该人格出场场景描写的系统提示。
+	// 仅在 persona YAML 文件中设置；供 Loader.LoadEntrancePrompt 读取。
+	EntrancePrompt string `yaml:"entrance_prompt"`
 }
 
 // ActivePath 代表用户当前激活的练气士修行路径。
