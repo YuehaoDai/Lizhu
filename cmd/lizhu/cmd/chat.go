@@ -24,22 +24,32 @@ var chatCmd = &cobra.Command{
 	},
 }
 
+// guardianLabel 返回护道人的显示名称。
+// personaName 非空时返回 "护道人·<personaName>"，否则返回 "护道人"。
+func guardianLabel(personaName string) string {
+	if personaName != "" {
+		return "护道人·" + personaName
+	}
+	return "护道人"
+}
+
 func runChat(ctx context.Context) error {
 	agent, err := newGuardianAgent(ctx)
 	if err != nil {
 		return err
 	}
 
+	label := guardianLabel(agent.PersonaName())
+
 	profile, err := repo.GetOrCreateProfile(ctx, "default")
 	if err != nil {
 		return fmt.Errorf("读取修行档案失败: %w", err)
 	}
 
-	printWelcome(profile)
+	printWelcome(profile, label)
 
 	var history []*schema.Message
 	scanner := bufio.NewScanner(os.Stdin)
-	// 支持较长的输入行
 	scanner.Buffer(make([]byte, 64*1024), 64*1024)
 
 	for {
@@ -54,7 +64,7 @@ func runChat(ctx context.Context) error {
 
 		switch input {
 		case "/quit", "/exit", "/q":
-			fmt.Println("\n护道人：修行路漫漫，保重。")
+			fmt.Printf("\n%s：修行路漫漫，保重。\n", label)
 			return nil
 		case "/clear":
 			history = nil
@@ -68,9 +78,9 @@ func runChat(ctx context.Context) error {
 			continue
 		}
 
-	fmt.Print("\n护道人 › ")
-	fmt.Println()
-	fmt.Println(strings.Repeat("─", 60))
+		fmt.Printf("\n%s › ", label)
+		fmt.Println()
+		fmt.Println(strings.Repeat("─", 60))
 
 		// 流式输出：遇到 <eval_json> 标记前的内容实时显示，之后的 token 静默缓冲
 		var printed strings.Builder
@@ -83,7 +93,6 @@ func runChat(ctx context.Context) error {
 			if idx := strings.Index(combined, "<eval_json>"); idx >= 0 {
 				evalTagSeen = true
 				visible := combined[:idx]
-				// 只打印还未输出的部分
 				fmt.Print(visible[printed.Len():])
 				printed.Reset()
 				printed.WriteString(visible)
@@ -104,20 +113,22 @@ func runChat(ctx context.Context) error {
 	return scanner.Err()
 }
 
-func printWelcome(profile *episodic.Profile) {
+func printWelcome(profile *episodic.Profile, label string) {
+	// 横幅宽度固定 50 字符，居中显示 label
+	bannerText := "骊珠 · " + label + " 已就位"
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════════╗")
-	fmt.Println("║           骊珠 · 护道人已就位                     ║")
+	fmt.Printf("║  %-46s  ║\n", bannerText)
 	fmt.Println("╚══════════════════════════════════════════════════╝")
 	fmt.Println()
 
 	if profile.GoLianqiScore > 0 || profile.AILianqiScore > 0 {
-		fmt.Println("护道人已读取修行档案，可直接继续上次修行。")
+		fmt.Printf("%s已读取修行档案，可直接继续上次修行。\n", label)
 		printProfileSummary(profile)
 	} else {
-		fmt.Println("这是你第一次与护道人相见。")
+		fmt.Printf("这是你第一次与%s相见。\n", label)
 		fmt.Println("请先描述你的技术背景、工作经历与当前在学的内容，")
-		fmt.Println("护道人将进行初次境界诊断并建立修行档案。")
+		fmt.Printf("%s将进行初次境界诊断并建立修行档案。\n", label)
 	}
 	fmt.Println("\n输入 /help 查看可用命令。")
 	fmt.Println()
@@ -128,7 +139,7 @@ func printChatHelp() {
 可用命令：
   /status  — 查看当前修行档案与法器谱
   /clear   — 清空本次会话历史（不影响已保存的档案）
-  /quit    — 退出护道人对话
+  /quit    — 退出对话
   /help    — 显示此帮助
 `)
 }

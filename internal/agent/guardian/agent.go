@@ -29,6 +29,9 @@ type Config struct {
 	// 用户
 	UserID   string
 	UserName string
+	// 护道人人格
+	PersonaID   string // 人格ID，对应世界观 YAML 中的 persona_id 字段
+	PersonaName string // 显示名称，用于 UI 展示
 	// 会话
 	HistoryWindow int // 注入的历史摘要数量
 }
@@ -40,6 +43,9 @@ type Agent struct {
 	loader *worldview.Loader
 	repo   *episodic.Repository
 }
+
+// PersonaName 返回护道人显示名称（空字符串表示使用默认"护道人"）。
+func (a *Agent) PersonaName() string { return a.cfg.PersonaName }
 
 // New 创建护道人 Agent。
 func New(ctx context.Context, cfg Config, repo *episodic.Repository) (*Agent, error) {
@@ -125,8 +131,8 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 
 // buildSystemMessage 构建包含世界观 + 用户档案 + 历史摘要的系统消息。
 func (a *Agent) buildSystemMessage(ctx context.Context) (string, error) {
-	// 世界观系统提示
-	worldviewPrompt, err := a.loader.BuildSystemPrompt(a.cfg.ActivePath)
+	// 世界观系统提示（透传人格ID，加载对应语料）
+	worldviewPrompt, err := a.loader.BuildSystemPrompt(a.cfg.ActivePath, a.cfg.PersonaID)
 	if err != nil {
 		return "", err
 	}

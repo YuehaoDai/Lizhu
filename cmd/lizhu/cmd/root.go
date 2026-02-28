@@ -147,6 +147,8 @@ func newGuardianAgent(ctx context.Context) (*guardian.Agent, error) {
 		ActivePath:    activePath,
 		UserID:        "default",
 		UserName:      userName,
+		PersonaID:     viper.GetString("guardian.persona_id"),
+		PersonaName:   viper.GetString("guardian.persona_name"),
 		HistoryWindow: historyWindow,
 	}
 	return guardian.New(ctx, cfg, repo)

@@ -21,24 +21,31 @@ func NewLoader(dir string) *Loader {
 	return &Loader{dir: dir}
 }
 
-// BuildSystemPrompt 读取目录下所有 YAML，过滤路径，
+// BuildSystemPrompt 读取目录下所有 YAML，按路径和人格过滤，
 // 按 order 排序后拼接成完整系统 Prompt。
-func (l *Loader) BuildSystemPrompt(path ActivePath) (string, error) {
+// personaID 为空时只包含 persona_id 为空的节（通用节）；
+// personaID 非空时额外包含 persona_id 与之匹配的节。
+func (l *Loader) BuildSystemPrompt(path ActivePath, personaID string) (string, error) {
 	sections, err := l.loadAll()
 	if err != nil {
 		return "", fmt.Errorf("worldview: load sections: %w", err)
 	}
 
-	// 过滤：保留 path_filter 为空（通用）或与激活路径匹配的节
+	// 过滤：同时满足 path_filter 和 persona_id 两个维度
 	filtered := make([]Section, 0, len(sections))
 	for _, s := range sections {
+		// persona_id 过滤：空=通用；非空=仅匹配指定人格
+		if s.PersonaID != "" && s.PersonaID != personaID {
+			continue
+		}
+
+		// path_filter 过滤
 		if s.PathFilter == "" {
 			filtered = append(filtered, s)
 			continue
 		}
 		switch path {
 		case PathBoth:
-			// 两条并修：包含所有节
 			filtered = append(filtered, s)
 		case PathGo:
 			if s.PathFilter == "go" {

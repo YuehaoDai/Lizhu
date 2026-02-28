@@ -11,7 +11,7 @@ const testDataDir = "testdata/worldview"
 
 func TestBuildSystemPrompt_Both(t *testing.T) {
 	loader := worldview.NewLoader(testDataDir)
-	prompt, err := loader.BuildSystemPrompt(worldview.PathBoth)
+	prompt, err := loader.BuildSystemPrompt(worldview.PathBoth, "")
 	if err != nil {
 		t.Fatalf("BuildSystemPrompt(both) error: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestBuildSystemPrompt_Both(t *testing.T) {
 
 func TestBuildSystemPrompt_GoOnly(t *testing.T) {
 	loader := worldview.NewLoader(testDataDir)
-	prompt, err := loader.BuildSystemPrompt(worldview.PathGo)
+	prompt, err := loader.BuildSystemPrompt(worldview.PathGo, "")
 	if err != nil {
 		t.Fatalf("BuildSystemPrompt(go) error: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestBuildSystemPrompt_GoOnly(t *testing.T) {
 
 func TestBuildSystemPrompt_AIOnly(t *testing.T) {
 	loader := worldview.NewLoader(testDataDir)
-	prompt, err := loader.BuildSystemPrompt(worldview.PathAI)
+	prompt, err := loader.BuildSystemPrompt(worldview.PathAI, "")
 	if err != nil {
 		t.Fatalf("BuildSystemPrompt(ai) error: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestBuildSystemPrompt_AIOnly(t *testing.T) {
 
 func TestBuildSystemPrompt_OrderRespected(t *testing.T) {
 	loader := worldview.NewLoader(testDataDir)
-	prompt, err := loader.BuildSystemPrompt(worldview.PathBoth)
+	prompt, err := loader.BuildSystemPrompt(worldview.PathBoth, "")
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -87,8 +87,20 @@ func TestBuildSystemPrompt_OrderRespected(t *testing.T) {
 
 func TestBuildSystemPrompt_InvalidDir(t *testing.T) {
 	loader := worldview.NewLoader("/nonexistent/path")
-	_, err := loader.BuildSystemPrompt(worldview.PathBoth)
+	_, err := loader.BuildSystemPrompt(worldview.PathBoth, "")
 	if err == nil {
 		t.Error("expected error for nonexistent directory, got nil")
+	}
+}
+
+func TestBuildSystemPrompt_PersonaFilter(t *testing.T) {
+	loader := worldview.NewLoader(testDataDir)
+	// 不指定人格时，persona_id 非空的节不应出现
+	prompt, err := loader.BuildSystemPrompt(worldview.PathBoth, "")
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if strings.Contains(prompt, "PERSONA_ONLY_CONTENT") {
+		t.Error("no-persona: prompt should NOT contain persona-specific section")
 	}
 }

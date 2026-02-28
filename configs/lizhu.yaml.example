@@ -31,3 +31,7 @@ user:
 session:
   history_window: 5          # 注入上下文的历次会话摘要数量
   max_tokens: 4096           # 单次对话最大 token
+
+guardian:
+  persona_id: ""             # 护道人人格ID，空=无名护道人；如: "qi_jingchun"
+  persona_name: ""           # 对话框显示名称，空=只显示"护道人"；如: "齐静春"
