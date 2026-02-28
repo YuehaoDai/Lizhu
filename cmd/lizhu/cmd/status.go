@@ -8,6 +8,7 @@ import (
 	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // ---- 样式定义 ----
@@ -54,14 +55,18 @@ func runStatus(ctx context.Context) error {
 		return fmt.Errorf("读取会话记录失败: %w", err)
 	}
 
-	printFullProfile(profile, toolMastery, sessions)
+	userName := viper.GetString("user.name")
+	if userName == "" {
+		userName = "修行者"
+	}
+	printFullProfile(userName, profile, toolMastery, sessions)
 	return nil
 }
 
 // printFullProfile 打印完整档案（status 命令使用）。
-func printFullProfile(p *episodic.Profile, tools []*episodic.ToolMastery, sessions []*episodic.Session) {
+func printFullProfile(userName string, p *episodic.Profile, tools []*episodic.ToolMastery, sessions []*episodic.Session) {
 	const borderWidth = 52 // ╔ + 50×═ + ╗，内容区 50 列
-	bannerText := "骊珠 · 修行档案"
+	bannerText := "骊珠 · " + userName + "的修行档案"
 	textW := termWidth(bannerText)
 	leftPad := (borderWidth - textW) / 2
 	if leftPad < 0 {
