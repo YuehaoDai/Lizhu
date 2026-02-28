@@ -176,11 +176,44 @@ func runChatCLI(ctx context.Context) error {
 	return nil
 }
 
+// termWidth 计算字符串的终端显示宽度（CJK 全角字符算 2 列，其余算 1 列）。
+func termWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		if r >= 0x1100 && (r <= 0x115F || // Hangul Jamo
+			r == 0x2329 || r == 0x232A ||
+			(r >= 0x2E80 && r <= 0x303E) || // CJK Radicals Supplement .. CJK Symbols
+			(r >= 0x3040 && r <= 0x33FF) || // Japanese
+			(r >= 0x3400 && r <= 0x4DBF) || // CJK Unified Ideographs Extension A
+			(r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
+			(r >= 0xA000 && r <= 0xA4CF) || // Yi
+			(r >= 0xAC00 && r <= 0xD7AF) || // Hangul Syllables
+			(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility Ideographs
+			(r >= 0xFE10 && r <= 0xFE1F) || // Vertical forms
+			(r >= 0xFE30 && r <= 0xFE4F) || // CJK Compatibility Forms
+			(r >= 0xFF00 && r <= 0xFF60) || // Fullwidth Forms
+			(r >= 0xFFE0 && r <= 0xFFE6) ||
+			(r >= 0x1F300 && r <= 0x1F64F) || // Misc Symbols and Pictographs
+			(r >= 0x20000 && r <= 0x2A6DF)) { // CJK Extension B
+			w += 2
+		} else {
+			w++
+		}
+	}
+	return w
+}
+
 func printWelcomeCLI(label, entranceScene string, firstTime bool) {
+	const borderWidth = 52 // ╔ + 50×═ + ╗
 	bannerText := "骊珠 · " + label + " 已就位"
+	textW := termWidth(bannerText)
+	leftPad := (borderWidth - textW) / 2
+	if leftPad < 0 {
+		leftPad = 0
+	}
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════════╗")
-	fmt.Printf("║  %-46s  ║\n", bannerText)
+	fmt.Printf("%s%s\n", strings.Repeat(" ", leftPad), bannerText)
 	fmt.Println("╚══════════════════════════════════════════════════╝")
 	fmt.Println()
 
