@@ -27,8 +27,7 @@
 
 | 特性 | 说明 |
 |------|------|
-| **Bubble Tea TUI** | 全屏终端界面替代 readline，三层布局（标题栏 + 可滚动对话区 + 输入框），彩色进度条 |
-| **流式输出** | LLM token 逐字追加到 TUI viewport，`<eval_json>` 块静默过滤，不污染对话区 |
+| **流式输出** | LLM token 逐字流式输出，`<eval_json>` 块在评估模式下静默过滤，不污染对话区 |
 | **RAG 知识库** | 笔记/代码文件向量化写入 Milvus，对话时自动检索 top-3 相关片段注入系统提示 |
 | **知识整理官 Agent** | `lizhu note add` 时调用 Librarian 对文件内容提炼结构化摘要（要点列表 + 关键词），摘要随文件记录持久化 |
 | **lipgloss 彩色档案** | `lizhu status` 输出彩色境界进度条、分区标题高亮展示 |
@@ -91,46 +90,20 @@ go build -o lizhu ./cmd/lizhu
 ## CLI 命令
 
 ```
-lizhu chat                  与护道人开始修行对话（全屏 TUI 界面）
+lizhu chat                  与护道人开始修行对话（readline 交互式 CLI）
 lizhu status                查看完整修行档案与法器谱（彩色进度条）
 lizhu note add <文件路径>   将笔记/代码文件入库到 RAG 知识库
 lizhu note list             列出所有已索引的文件及摘要信息
 ```
 
-### TUI 对话界面
+### 对话内嵌命令
 
-`lizhu chat` 启动后进入全屏 Bubble Tea TUI 界面：
-
-```
-┌─────────────────────────────────────────────┐
-│  骊珠 · 护道人·齐静春          ● 思考中…   │
-├─────────────────────────────────────────────┤
-│                                             │
-│  [对话区 - 可上下滚动]                      │
-│                                             │
-│  护道人·齐静春 ›                            │
-│  ...                                        │
-│                                             │
-├─────────────────────────────────────────────┤
-│  输入修行感悟，或 /help 查看命令…           │
-│  /help /assess /status /clear /quit         │
-└─────────────────────────────────────────────┘
-```
-
-**键盘操作**：
-
-| 按键 | 功能 |
-|------|------|
-| `Enter` | 发送消息 |
-| `PgUp` / `PgDn` | 上下滚动对话记录 |
-| `Ctrl+C` | 退出 |
-
-**内嵌命令**（在输入框中输入）：
+在 `lizhu chat` 启动后，可直接在输入提示符处使用以下命令：
 
 | 命令 | 功能 |
 |------|------|
 | `/assess` | 主动请求完整境界评估与破境方案（强制进入评估模式）|
-| `/status` | 在对话区内查看当前修行档案 |
+| `/status` | 查看当前修行档案 |
 | `/clear` | 清空本次会话历史（不影响已保存档案）|
 | `/quit` | 退出对话 |
 | `/help` | 显示帮助信息 |
@@ -184,7 +157,11 @@ milvus:
   enabled: false             # true = 启用 RAG；需先 docker-compose up -d 并等待 Milvus 就绪
   address: "localhost:19530" # Milvus gRPC 地址
   collection: "lizhu_knowledge"   # Collection 名称（首次运行自动创建）
-  embedding_model: "text-embedding-3-small"  # 向量化模型（与 llm.base_url 同端点）
+  embedding_model: "text-embedding-v2"  # 向量化模型（与 llm.base_url 同端点）
+
+# ── 笔记目录 ──────────────────────────────────────
+notes:
+  path: "./notes"            # note add 时的相对根路径
 
 # ── 世界观 ────────────────────────────────────────
 worldview:
@@ -247,10 +224,10 @@ guardian:
 ```yaml
 guardian:
   persona_id: "qi_jingchun"   # 人格ID，对应 configs/worldview/ 中的 persona_xxx.yaml
-  persona_name: "齐静春"       # TUI 标题栏和对话区显示名称
+  persona_name: "齐静春"       # 对话区显示名称
 ```
 
-启用后，TUI 标题栏变为 `骊珠 · 护道人·齐静春`，系统 Prompt 自动注入齐静春的说话风格语料（儒家文圣亲传弟子，温润如玉，循循善诱）。
+启用后，系统 Prompt 自动注入齐静春的说话风格语料（儒家文圣亲传弟子，温润如玉，循循善诱），并由 LLM 即兴生成符合人格的文学出场描写。
 
 ### 关闭人格（无名护道人）
 
@@ -301,14 +278,13 @@ lizhu/
 ├── cmd/lizhu/
 │   └── cmd/                # CLI 命令（cobra）
 │       ├── root.go         # 根命令、依赖初始化
-│       ├── chat.go         # chat 命令 → 启动 Bubble Tea TUI
+│       ├── chat.go         # chat 命令 → readline 交互式对话
 │       ├── note.go         # note add / note list 命令
 │       └── status.go       # status 命令（lipgloss 彩色输出）
 ├── internal/
 │   ├── agent/
 │   │   ├── guardian/       # 护道人 Agent（Eino ChatModel + 上下文构建 + RAG 注入）
 │   │   └── librarian/      # 知识整理官 Agent（笔记摘要提炼）
-│   ├── tui/                # Bubble Tea TUI（model / view / keymap）
 │   ├── knowledge/          # RAG 知识库（Milvus 向量写入 + 语义检索 + Embedding）
 │   ├── memory/
 │   │   └── episodic/       # 情节记忆（PostgreSQL：档案、会话摘要、法器谱、知识文件）
@@ -321,10 +297,7 @@ lizhu/
 ### 数据流
 
 ```
-用户输入
-  │
-  ▼
-TUI（internal/tui）            ← Bubble Tea 事件循环
+用户输入（readline CLI）
   │
   ▼
 Guardian Agent（internal/agent/guardian）
@@ -333,7 +306,7 @@ Guardian Agent（internal/agent/guardian）
   └── Knowledge Retriever → Milvus top-3 知识块（可选）
   │
   ▼
-LLM 流式输出 → token 逐字回传 TUI → <eval_json> 块静默解析 → 持久化
+LLM 流式输出 → token 逐字打印 → <eval_json> 块静默解析 → 持久化
 ```
 
 ```
@@ -349,7 +322,7 @@ Knowledge Ingester → 分块 → Embedding → Milvus
 PostgreSQL（knowledge_files 表，含摘要字段）
 ```
 
-**技术选型**：Go · [Eino](https://github.com/cloudwego/eino) · [Bubble Tea](https://github.com/charmbracelet/bubbletea) · [lipgloss](https://github.com/charmbracelet/lipgloss) · PostgreSQL · Milvus（可选）· cobra/viper
+**技术选型**：Go · [Eino](https://github.com/cloudwego/eino) · [lipgloss](https://github.com/charmbracelet/lipgloss) · PostgreSQL · Milvus（可选）· cobra/viper
 
 ---
 
@@ -364,7 +337,6 @@ go test ./...
 # 指定包（含详情）
 go test -v ./internal/knowledge/...        # chunkText、Embedding mock、Ingester/Retriever stub
 go test -v ./internal/agent/librarian/...  # prompt 构建、Summarize mock LLM
-go test -v ./internal/tui/...              # TUI Model 状态机、View 渲染辅助函数
 go test -v ./internal/agent/guardian/...   # 评估 JSON 解析、mergeUnique
 go test -v ./internal/memory/episodic/...  # ScoreToLevel
 go test -v ./internal/worldview/...        # 世界观 Loader
@@ -403,5 +375,5 @@ migrate -database "postgres://lizhu:lizhu@localhost:5432/lizhu?sslmode=disable" 
 ## 交付路线
 
 - **一期（已完成）**：CLI readline 对话 + 修行档案持久化 + 世界观 YAML 配置 + 护道人人格系统
-- **二期（已完成）**：Bubble Tea TUI 界面 + Milvus RAG 知识库 + 知识整理官 Agent + lipgloss 彩色档案
+- **二期（已完成）**：Milvus RAG 知识库 + 知识整理官 Agent + 流式输出双模式 + lipgloss 彩色档案
 - **三期（计划中）**：Web API + 精美 Web UI + 酷炫修行报告 + 多 Agent 协作（对练陪练等）
