@@ -60,9 +60,17 @@ func runStatus(ctx context.Context) error {
 
 // printFullProfile 打印完整档案（status 命令使用）。
 func printFullProfile(p *episodic.Profile, tools []*episodic.ToolMastery, sessions []*episodic.Session) {
+	const borderWidth = 52 // ╔ + 50×═ + ╗，内容区 50 列
+	bannerText := "骊珠 · 修行档案"
+	textW := termWidth(bannerText)
+	leftPad := (borderWidth - textW) / 2
+	if leftPad < 0 {
+		leftPad = 0
+	}
+
 	fmt.Println()
 	fmt.Println(titleStyle.Render("╔══════════════════════════════════════════════════╗"))
-	fmt.Println(titleStyle.Render("║              骊珠 · 修行档案                       ║"))
+	fmt.Printf("%s%s\n", strings.Repeat(" ", leftPad), titleStyle.Render(bannerText))
 	fmt.Println(titleStyle.Render("╚══════════════════════════════════════════════════╝"))
 
 	fmt.Println("\n" + sectionStyle.Render("【修行境界】"))
