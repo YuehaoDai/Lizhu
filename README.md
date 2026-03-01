@@ -53,6 +53,14 @@
 
 ---
 
+## 修行档案示例
+
+<p align="center">
+  <img src="assets/preview_status.png" alt="骊珠修行档案示例" width="780"/>
+</p>
+
+---
+
 ## 功能特性
 
 ### 核心能力（一期）
@@ -61,9 +69,9 @@
 |------|------|
 | **双轨练气士评估** | Go 开发练气士（十五境）与 AI 应用练气士（十五境）独立评分，境界名称严格遵循原著 |
 | **武夫底层内功** | 计算机底层硬功独立追踪，十一境从泥胚到武神 |
-| **法器谱** | 七大类工具掌握程度客观量化（0–100，初识 / 熟用 / 精通 / 宗师四级制）|
+| **法宝体系** | 多类生态工具掌握程度客观量化（0–100，初识 / 熟用 / 精通 / 宗师四级制）；类别遵循《剑来》世界观命名（本命飞剑、绘卷、符箓、方寸物、护山大阵、灵宠、观星镜、法家戒尺）|
 | **按需评估** | 护道人智能识别对话意图：闲聊/技术问答自然对话，汇报成果/`/assess` 时输出完整境界报告 |
-| **长期记忆** | 修行档案与会话摘要持久化至 PostgreSQL，重启后无需重复自我介绍 |
+| **长期记忆** | 修行档案、整次会话摘要、结构化能力证据条目均持久化至 PostgreSQL，重启后无需重复自我介绍 |
 | **世界观热更新** | `configs/worldview/*.yaml` 随时补充设定，无需改代码重新编译 |
 
 ### 二期新增能力
@@ -74,6 +82,8 @@
 | **RAG 知识库** | 笔记/代码文件向量化写入 Milvus，对话时自动检索 top-3 相关片段注入系统提示 |
 | **知识整理官 Agent** | `lizhu note add` 调用独立 Librarian Agent，提炼结构化摘要（要点列表 + 关键词），随文件持久化 |
 | **lipgloss 彩色档案** | `lizhu status` 输出彩色境界进度条与分区标题高亮 |
+| **能力证据体系** | 对话结束时 Librarian 自动提炼 3~5 条结构化证据（工具/类别/置信度 1-5），存入 `ability_evidence` 表；`/assess` 时自动注入系统提示，实现跨对话长期记忆 |
+| **退出进度展示** | `/quit` 或 Ctrl+C 后逐行展示封存步骤（等待评估同步→生成摘要→封存证据），操作完毕显示提示后关闭 |
 
 ---
 
@@ -108,8 +118,10 @@ sequenceDiagram
     KR-->>GA: 相关知识块（Milvus 检索，超时保护）
     GA->>LLM: 流式请求（system + history + input）
     LLM-->>CLI: token stream（逐字打印）
-    GA->>DB: persistSession(summary)
     CLI-->>U: 护道人回复完整呈现
+    Note over CLI,U: /quit 或 Ctrl+C 触发退出序列
+    CLI->>GA: WaitPersist() + PersistFullSession(history)
+    GA->>DB: SaveSession（整次会话摘要）+ SaveEvidenceItems（能力证据）
 ```
 
 ### 评估模式数据流（`/assess`）
@@ -125,14 +137,16 @@ sequenceDiagram
 
     U->>CLI: 输入 /assess
     CLI->>GA: ChatStream(input, assess=true)
+    GA->>DB: GetRecentEvidence（最近 20 条能力证据）
+    DB-->>GA: 历史能力证据条目
     GA->>WL: BuildSystemPrompt(persona, assess=true)
-    WL-->>GA: 完整系统提示词（含 eval_json 格式规范）
+    WL-->>GA: 完整系统提示词（含 eval_json 格式规范 + 历史证据块）
     GA->>LLM: 流式请求
     LLM-->>CLI: 可见文字 token（逐字打印）
     LLM-->>GA: <eval_json>...</eval_json>（后台静默接收）
     Note over CLI: 检测到 <eval_json> 立即截断打印
     GA->>GA: 后台 goroutine 解析 eval_json
-    GA->>DB: persistEvaluation（更新档案、法器谱、会话摘要）
+    GA->>DB: persistEvaluation（更新档案、法器谱）
     DB-->>GA: OK
 ```
 
@@ -396,7 +410,7 @@ configs/worldview/
 ├── go_branches.yaml           # Go 路径分支：剑修 / 符箓 / 阵法 / 炼丹
 ├── ai_branches.yaml           # AI 路径分支：符咒宗师 / 藏书楼主 / Agent 统领 / 模型驯化师
 ├── sanjiaozhuzi.yaml          # 三教诸子哲学映射（儒 / 道 / 佛 / 兵 / 墨 / 法）
-├── tool_mastery.yaml          # 法器谱七大类定义与四级评分标准
+├── tool_mastery.yaml          # 法宝体系定义与四级评分标准（绘卷/方寸物/灵宠等《剑来》命名）
 ├── output_format.yaml         # 输出格式规范（assess_only: true，仅评估模式注入）
 └── persona_qi_jingchun.yaml   # 齐静春人格语料与出场提示词
 ```
@@ -475,6 +489,7 @@ go vet ./...
 |------|------|
 | `000001_init.up.sql` | profiles、sessions、tool_mastery 表 |
 | `000002_knowledge_files.up.sql` | knowledge_files 表（含 summary 字段）|
+| `000003_ability_evidence.up.sql` | ability_evidence 表（结构化能力证据，含 category / tool / confidence 字段）|
 
 ```bash
 # 手动查看迁移状态（需安装 migrate CLI）
@@ -496,6 +511,10 @@ migrate -database "postgres://lizhu:lizhu@localhost:5432/lizhu?sslmode=disable" 
         知识整理官 Agent（笔记摘要提炼）
         评估/对话双模式流式输出
         lipgloss 彩色档案展示
+        法宝体系世界观精确分类
+        整次会话摘要（替代逐轮摘要）
+        结构化能力证据体系（跨对话积累，/assess 时自动注入）
+        退出进度展示（封存步骤逐行打印）
 
 三期 🔜  Web API + 精美 Web UI
         酷炫修行周报/月报

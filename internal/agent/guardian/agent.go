@@ -347,12 +347,26 @@ func (a *Agent) buildSystemMessage(ctx context.Context, userInput string, assess
 		}
 	}
 
+	// 历史能力证据块（仅评估模式注入，帮助护道人跨对话追踪能力积累）
+	evidenceBlock := ""
+	if assess {
+		evidenceItems, evErr := a.repo.GetRecentEvidence(ctx, a.cfg.UserID, 20)
+		if evErr != nil {
+			fmt.Printf("[警告] 能力证据读取失败: %v\n", evErr)
+		} else if len(evidenceItems) > 0 {
+			evidenceBlock = buildEvidenceBlock(evidenceItems)
+		}
+	}
+
 	parts := []string{worldviewPrompt, contextBlock}
 	if knowledgeSummaryBlock != "" {
 		parts = append(parts, knowledgeSummaryBlock)
 	}
 	if ragBlock != "" {
 		parts = append(parts, ragBlock)
+	}
+	if evidenceBlock != "" {
+		parts = append(parts, evidenceBlock)
 	}
 	return strings.Join(parts, "\n\n"), nil
 }

@@ -1,4 +1,4 @@
-package guardian
+﻿package guardian
 
 import (
 	"context"
@@ -92,12 +92,17 @@ func (a *Agent) persistEvaluation(ctx context.Context, response string) error {
 	return nil
 }
 
-// PersistFullSession 在整次 chat 会话结束后保存会话概要记录。
+// PersistResult 保存整次会话后返回的结果摘要，用于退出时展示进度。
+type PersistResult struct {
+	SummaryGenerated bool
+	EvidenceCount    int
+}
+
+// PersistFullSession 在整次 chat 会话结束后保存会话概要记录并提炼能力证据条目。
 // history 为本次 chat 从开始到结束的完整多轮消息列表。
-// 不含评估分数，仅记录会话摘要（用于"初次相见"逻辑与历史摘要注入）。
-func (a *Agent) PersistFullSession(ctx context.Context, history []*schema.Message) error {
+func (a *Agent) PersistFullSession(ctx context.Context, history []*schema.Message) (PersistResult, error) {
 	if len(history) == 0 {
-		return nil
+		return PersistResult{}, nil
 	}
 
 	// 将完整 history 拼装为可读对话文本
@@ -121,6 +126,7 @@ func (a *Agent) PersistFullSession(ctx context.Context, history []*schema.Messag
 		}
 	}
 
+	var result PersistResult
 	var summary string
 
 	// 优先调用 Librarian 生成整个会话的语义摘要
@@ -130,6 +136,7 @@ func (a *Agent) PersistFullSession(ctx context.Context, history []*schema.Messag
 		s, err := a.librarian.SummarizeSession(sumCtx, a.cfg.UserName, conversation)
 		if err == nil && s != "" {
 			summary = s
+			result.SummaryGenerated = true
 		} else {
 			fmt.Printf("[警告] 会话摘要生成失败，回退到截断文本: %v\n", err)
 		}
@@ -150,13 +157,43 @@ func (a *Agent) PersistFullSession(ctx context.Context, history []*schema.Messag
 		XinMoIdentified: []string{},
 		RawResponse:     lastReply,
 	}
-	return a.repo.SaveSession(ctx, session)
+	if err := a.repo.SaveSession(ctx, session); err != nil {
+		return result, fmt.Errorf("save session: %w", err)
+	}
+
+	// 提炼能力证据条目（独立 timeout，失败不影响摘要保存）
+	if a.librarian != nil {
+		evCtx, evCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer evCancel()
+		rawItems, err := a.librarian.ExtractEvidence(evCtx, a.cfg.UserName, conversation)
+		if err != nil {
+			fmt.Printf("[警告] 能力证据提炼失败: %v\n", err)
+		} else {
+			var items []*episodic.EvidenceItem
+			for _, r := range rawItems {
+				items = append(items, &episodic.EvidenceItem{
+					UserID:     a.cfg.UserID,
+					Category:   r.Category,
+					Tool:       r.Tool,
+					Evidence:   r.Evidence,
+					Confidence: r.Confidence,
+				})
+			}
+			if saveErr := a.repo.SaveEvidenceItems(ctx, items); saveErr != nil {
+				fmt.Printf("[警告] 能力证据保存失败: %v\n", saveErr)
+			} else {
+				result.EvidenceCount = len(items)
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // normCategory 将 LLM 可能输出的中/英文类别名统一映射为 status.go 使用的英文 key。
 func normCategory(c string) string {
 	switch c {
-	case "本命法宝", "primary_weapon":
+	case "本命飞剑", "primary_weapon":
 		return "primary_weapon"
 	case "绘卷", "juanjuan":
 		return "juanjuan"

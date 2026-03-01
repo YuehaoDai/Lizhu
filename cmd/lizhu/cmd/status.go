@@ -1,4 +1,4 @@
-package cmd
+﻿package cmd
 
 import (
 	"context"
@@ -103,7 +103,7 @@ func printFullProfile(userName string, p *episodic.Profile, tools []*episodic.To
 		groupedTools := groupByCategory(tools)
 		categories := []string{"primary_weapon", "juanjuan", "fulu", "fangcun", "zhenfa", "linchong", "telescope", "quality"}
 		catNames := map[string]string{
-			"primary_weapon": "本命法宝",
+			"primary_weapon": "本命飞剑",
 			"juanjuan":       "绘卷",
 			"fulu":           "符箓",
 			"fangcun":        "方寸物",

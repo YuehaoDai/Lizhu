@@ -47,6 +47,17 @@ type Session struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
+// EvidenceItem 代表从一次对话中提炼出的单条结构化能力证据。
+type EvidenceItem struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	Category   string    `json:"category"`   // go_lianqi | ai_lianqi | wufu | general
+	Tool       string    `json:"tool"`        // 涉及的具体工具/技术，无则为空串
+	Evidence   string    `json:"evidence"`    // 具体事实描述，≤60字
+	Confidence int       `json:"confidence"`  // 1~5，5=亲自演示代码
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 // ToolMastery 代表某个工具的掌握程度记录。
 type ToolMastery struct {
 	UserID    string    `json:"user_id"`
@@ -237,6 +248,48 @@ func (r *Repository) GetToolMastery(ctx context.Context, userID string) ([]*Tool
 			return nil, err
 		}
 		result = append(result, &tm)
+	}
+	return result, rows.Err()
+}
+
+// SaveEvidenceItems 批量保存能力证据条目。
+func (r *Repository) SaveEvidenceItems(ctx context.Context, items []*EvidenceItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	for _, item := range items {
+		_, err := r.pool.Exec(ctx, `
+			INSERT INTO ability_evidence (user_id, category, tool, evidence, confidence)
+			VALUES ($1, $2, $3, $4, $5)
+		`, item.UserID, item.Category, item.Tool, item.Evidence, item.Confidence)
+		if err != nil {
+			return fmt.Errorf("save evidence item: %w", err)
+		}
+	}
+	return nil
+}
+
+// GetRecentEvidence 获取最近 n 条能力证据条目，按时间倒序。
+func (r *Repository) GetRecentEvidence(ctx context.Context, userID string, n int) ([]*EvidenceItem, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, user_id, category, tool, evidence, confidence, created_at
+		FROM ability_evidence
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, userID, n)
+	if err != nil {
+		return nil, fmt.Errorf("query evidence: %w", err)
+	}
+	defer rows.Close()
+
+	var result []*EvidenceItem
+	for rows.Next() {
+		var e EvidenceItem
+		if err := rows.Scan(&e.ID, &e.UserID, &e.Category, &e.Tool, &e.Evidence, &e.Confidence, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan evidence: %w", err)
+		}
+		result = append(result, &e)
 	}
 	return result, rows.Err()
 }

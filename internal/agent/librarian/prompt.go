@@ -31,6 +31,35 @@ const sessionSummarizePrompt = `你是骊珠修行体系的「知识整理官」
 4. 不要出现"护道人说"、"AI回复"等元描述，直接陈述内容；
 5. 只输出摘要文字，不要加任何标题、序号或格式。`
 
+const evidenceExtractPrompt = `你是骊珠修行体系的「知识整理官」，负责从修行对话中提炼结构化的能力证据条目，供护道人长期追踪修行者的真实能力积累。
+
+要求：
+1. 从对话中识别修行者展示的具体技术能力、工具使用、解题过程、代码实现等可评估事实；
+2. 每条证据必须具体可验证（禁止泛泛描述，如"学习了Go语言"、"了解了git"）；
+3. 提炼 3~5 条最有价值的证据，证据不足 3 条时尽力提炼，不可编造；
+4. category 字段必须是以下之一：go_lianqi / ai_lianqi / wufu / general；
+5. tool 字段填写涉及的具体工具或技术名（如 goroutine、Git、Docker），无则填空串 ""；
+6. evidence 字段不超过 60 字，描述修行者实际展示的具体事实；
+7. confidence 字段评分标准：
+   - 5分：修行者亲自提交/演示了可运行代码
+   - 4分：修行者描述了具体实现细节或排错过程
+   - 3分：修行者能口述清晰的原理或步骤
+   - 2分：修行者有基本了解但描述不完整
+   - 1分：修行者仅提及该技术，未展示理解
+8. 只输出 JSON 数组，不要任何包裹文字、代码块标记或解释。
+
+输出示例：
+[
+  {"category":"go_lianqi","tool":"goroutine","evidence":"独立实现了goroutine+channel的生产者消费者模型，使用有缓冲channel控制流量","confidence":4},
+  {"category":"wufu","tool":"","evidence":"能口述TCP三次握手的完整过程及每步的状态机含义","confidence":3},
+  {"category":"go_lianqi","tool":"Git","evidence":"在实际项目中使用git rebase -i压缩了15个零散提交","confidence":5}
+]`
+
+// buildEvidenceExtractPrompt 构建能力证据提炼的用户消息。
+func buildEvidenceExtractPrompt(userName, conversation string) string {
+	return fmt.Sprintf("修行者（%s）与护道人的完整对话如下，请提炼能力证据条目：\n\n%s", userName, conversation)
+}
+
 // buildSummarizePrompt 构建笔记摘要的用户消息。
 func buildSummarizePrompt(fileName, content string) string {
 	return fmt.Sprintf("请整理以下笔记文件的核心内容：\n\n文件名：%s\n\n内容：\n%s", fileName, content)

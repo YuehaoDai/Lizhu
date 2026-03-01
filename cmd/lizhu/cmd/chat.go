@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/YuehaoDai/lizhu/internal/agent/guardian"
 	"github.com/cloudwego/eino/schema"
 	"github.com/peterh/liner"
 	"github.com/spf13/cobra"
@@ -54,13 +55,8 @@ func runChatCLI(ctx context.Context) error {
 	for {
 		raw, err := line.Prompt("修行者 › ")
 		if err != nil {
-			// Ctrl+C 或 EOF，先等后台持久化完成，再保存完整会话概要
-			agent.WaitPersist()
-			if len(history) > 0 {
-				if perr := agent.PersistFullSession(ctx, history); perr != nil {
-					fmt.Fprintf(os.Stderr, "[警告] 会话记录保存失败: %v\n", perr)
-				}
-			}
+			// Ctrl+C 或 EOF
+			runShutdownSequence(ctx, agent, history, label)
 			break
 		}
 		input := strings.TrimSpace(raw)
@@ -70,13 +66,7 @@ func runChatCLI(ctx context.Context) error {
 
 		switch input {
 		case "/quit", "/exit", "/q":
-			fmt.Printf("%s：修行路漫漫，保重。\n", label)
-			agent.WaitPersist()
-			if len(history) > 0 {
-				if perr := agent.PersistFullSession(ctx, history); perr != nil {
-					fmt.Fprintf(os.Stderr, "[警告] 会话记录保存失败: %v\n", perr)
-				}
-			}
+			runShutdownSequence(ctx, agent, history, label)
 			return nil
 		case "/clear":
 			history = nil
@@ -176,6 +166,41 @@ func runChatCLI(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// runShutdownSequence 在退出时依次等待后台持久化、保存会话概要与能力证据，
+// 并在终端逐步展示进度，让修行者看到系统正在进行的操作。
+func runShutdownSequence(ctx context.Context, agent *guardian.Agent, history []*schema.Message, label string) {
+	fmt.Printf("\n%s：修行路漫漫，保重。\n", label)
+	fmt.Println()
+	fmt.Println("[骊珠正在封存本次修行记录...]")
+
+	// 1. 等待 /assess 后台评估 goroutine 完成
+	agent.WaitPersist()
+	fmt.Println("  ✓ 评估档案已同步")
+
+	// 2. 保存整次对话摘要 + 能力证据
+	if len(history) == 0 {
+		fmt.Println("  · 本次对话无记录，跳过封存")
+		fmt.Println()
+		return
+	}
+
+	fmt.Println("  · 正在生成会话概要与能力证据...")
+	result, perr := agent.PersistFullSession(ctx, history)
+	if perr != nil {
+		fmt.Fprintf(os.Stderr, "  [警告] 会话记录保存失败: %v\n", perr)
+	} else {
+		if result.EvidenceCount > 0 {
+			fmt.Printf("  ✓ 已封存 %d 条能力证据\n", result.EvidenceCount)
+		} else {
+			fmt.Println("  ✓ 会话概要已封存")
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("本次修行已落入案牍。下次相见，护道人自会牢记今日所得。")
+	fmt.Println()
 }
 
 // termWidth 计算字符串的终端显示宽度（CJK 全角字符算 2 列，其余算 1 列）。
