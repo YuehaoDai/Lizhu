@@ -2,6 +2,7 @@ package librarian
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,14 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
+
+// RawEvidence 是 Librarian 从对话中提炼的单条能力证据（轻量中间结构体）。
+type RawEvidence struct {
+	Category   string `json:"category"`
+	Tool       string `json:"tool"`
+	Evidence   string `json:"evidence"`
+	Confidence int    `json:"confidence"`
+}
 
 // Config 知识整理官配置。
 type Config struct {
@@ -68,20 +77,55 @@ func (a *Agent) Summarize(ctx context.Context, filePath, content string) (string
 	return strings.TrimSpace(resp.Content), nil
 }
 
-// SummarizeSession 对一次护道对话生成简短摘要（一两句话），用于会话历史展示。
-// userName 为修行者名字，userInput 为用户输入，reply 为护道人回复。
-func (a *Agent) SummarizeSession(ctx context.Context, userName, userInput, reply string) (string, error) {
-	// 截断过长内容防止 token 溢出
-	if len(userInput) > 800 {
-		userInput = userInput[:800] + "……"
+// ExtractEvidence 从完整多轮对话文本中提炼结构化能力证据条目。
+func (a *Agent) ExtractEvidence(ctx context.Context, userName, conversation string) ([]*RawEvidence, error) {
+	// 截断过长内容防止 token 溢出，保留前 5000 字符
+	if len(conversation) > 5000 {
+		conversation = conversation[:5000] + "……[对话过长，已截断]"
 	}
-	if len(reply) > 1200 {
-		reply = reply[:1200] + "……"
+
+	msgs := []*schema.Message{
+		schema.SystemMessage(evidenceExtractPrompt),
+		schema.UserMessage(buildEvidenceExtractPrompt(userName, conversation)),
+	}
+
+	resp, err := a.model.Generate(ctx, msgs)
+	if err != nil {
+		return nil, fmt.Errorf("librarian extract evidence: %w", err)
+	}
+
+	raw := strings.TrimSpace(resp.Content)
+	// 去掉可能的 markdown 代码块包裹
+	if strings.HasPrefix(raw, "```") {
+		lines := strings.Split(raw, "\n")
+		var inner []string
+		for _, line := range lines {
+			if strings.HasPrefix(line, "```") {
+				continue
+			}
+			inner = append(inner, line)
+		}
+		raw = strings.Join(inner, "\n")
+	}
+
+	var items []*RawEvidence
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil, fmt.Errorf("librarian extract evidence: parse json: %w (raw: %s)", err, raw)
+	}
+	return items, nil
+}
+
+// SummarizeSession 对完整多轮护道对话生成简短摘要，用于会话历史展示。
+// userName 为修行者名字，conversation 为格式化后的完整对话文本。
+func (a *Agent) SummarizeSession(ctx context.Context, userName, conversation string) (string, error) {
+	// 截断过长内容防止 token 溢出，保留前 4000 字符
+	if len(conversation) > 4000 {
+		conversation = conversation[:4000] + "……[对话过长，已截断]"
 	}
 
 	msgs := []*schema.Message{
 		schema.SystemMessage(sessionSummarizePrompt),
-		schema.UserMessage(buildSessionSummarizePrompt(userName, userInput, reply)),
+		schema.UserMessage(buildSessionSummarizePrompt(userName, conversation)),
 	}
 
 	resp, err := a.model.Generate(ctx, msgs)

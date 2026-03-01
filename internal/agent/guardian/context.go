@@ -112,6 +112,30 @@ func buildKnowledgeSummaryBlock(files []*episodic.KnowledgeFile) string {
 	return sb.String()
 }
 
+// buildEvidenceBlock 将历史能力证据条目格式化为系统提示的注入块。
+// 仅在 assess=true 时调用，帮助护道人综合评估跨对话积累的能力。
+func buildEvidenceBlock(items []*episodic.EvidenceItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("========================\n")
+	sb.WriteString("【历史能力证据库（跨对话积累，评估时优先参考）】\n")
+	sb.WriteString("========================\n")
+	for _, item := range items {
+		date := item.CreatedAt.Format("01-02")
+		toolPart := ""
+		if item.Tool != "" {
+			toolPart = fmt.Sprintf("[%s/%s]", item.Category, item.Tool)
+		} else {
+			toolPart = fmt.Sprintf("[%s]", item.Category)
+		}
+		sb.WriteString(fmt.Sprintf("[%s] %s %s（置信度%d/5）\n", date, toolPart, item.Evidence, item.Confidence))
+	}
+	sb.WriteString("以上为历史对话中提炼的客观能力证据，应与本次对话内容综合评估。\n")
+	return sb.String()
+}
+
 // buildRAGBlock 将检索到的知识块格式化为系统提示中的参考资料节。
 func buildRAGBlock(chunks []knowledge.SearchResult) string {
 	var sb strings.Builder

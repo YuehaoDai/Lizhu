@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/YuehaoDai/lizhu/internal/agent/librarian"
@@ -43,16 +44,20 @@ type Config struct {
 
 // Agent 护道人智能体。
 type Agent struct {
-	cfg       Config
-	model     model.ChatModel
-	loader    *worldview.Loader
-	repo      *episodic.Repository
-	retriever *knowledge.Retriever
-	librarian *librarian.Agent
+	cfg          Config
+	model        model.ChatModel
+	loader       *worldview.Loader
+	repo         *episodic.Repository
+	retriever    *knowledge.Retriever
+	librarian    *librarian.Agent
+	persistWg    sync.WaitGroup // 追踪后台持久化 goroutine，退出前等待完成
 }
 
 // PersonaName 返回护道人显示名称（空字符串表示使用默认"护道人"）。
 func (a *Agent) PersonaName() string { return a.cfg.PersonaName }
+
+// WaitPersist 等待所有后台持久化 goroutine 完成，应在程序退出前调用。
+func (a *Agent) WaitPersist() { a.persistWg.Wait() }
 
 // New 创建护道人 Agent。
 func New(ctx context.Context, cfg Config, repo *episodic.Repository) (*Agent, error) {
@@ -139,10 +144,6 @@ func (a *Agent) Chat(ctx context.Context, history []*schema.Message, userInput s
 		if err := a.persistEvaluation(ctx, reply); err != nil {
 			fmt.Printf("[警告] 修行档案持久化失败: %v\n", err)
 		}
-	} else {
-		if err := a.persistSession(ctx, userInput, reply); err != nil {
-			fmt.Printf("[警告] 会话记录保存失败: %v\n", err)
-		}
 	}
 
 	newHistory := append(history,
@@ -197,21 +198,23 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 				continue
 			}
 
-			visibleReply := fullReply.String()
-			go func() {
-				defer stream.Close()
-				var tail strings.Builder
-				for {
-					c, e := stream.Recv()
-					if e != nil {
-						break
-					}
-					tail.WriteString(c.Content)
+		visibleReply := fullReply.String()
+		a.persistWg.Add(1)
+		go func() {
+			defer a.persistWg.Done()
+			defer stream.Close()
+			var tail strings.Builder
+			for {
+				c, e := stream.Recv()
+				if e != nil {
+					break
 				}
-				if perr := a.persistEvaluation(context.Background(), visibleReply+tail.String()); perr != nil {
-					fmt.Printf("[警告] 修行档案持久化失败: %v\n", perr)
-				}
-			}()
+				tail.WriteString(c.Content)
+			}
+			if perr := a.persistEvaluation(context.Background(), visibleReply+tail.String()); perr != nil {
+				fmt.Printf("[警告] 修行档案持久化失败: %v\n", perr)
+			}
+		}()
 
 			newHistory := append(history,
 				schema.UserMessage(userInput),
@@ -289,9 +292,6 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 	}
 
 	reply := fullReply.String()
-	if err := a.persistSession(ctx, userInput, reply); err != nil {
-		fmt.Printf("[警告] 会话记录保存失败: %v\n", err)
-	}
 	newHistory := append(history,
 		schema.UserMessage(userInput),
 		schema.AssistantMessage(reply, nil),
@@ -347,12 +347,26 @@ func (a *Agent) buildSystemMessage(ctx context.Context, userInput string, assess
 		}
 	}
 
+	// 历史能力证据块（仅评估模式注入，帮助护道人跨对话追踪能力积累）
+	evidenceBlock := ""
+	if assess {
+		evidenceItems, evErr := a.repo.GetRecentEvidence(ctx, a.cfg.UserID, 20)
+		if evErr != nil {
+			fmt.Printf("[警告] 能力证据读取失败: %v\n", evErr)
+		} else if len(evidenceItems) > 0 {
+			evidenceBlock = buildEvidenceBlock(evidenceItems)
+		}
+	}
+
 	parts := []string{worldviewPrompt, contextBlock}
 	if knowledgeSummaryBlock != "" {
 		parts = append(parts, knowledgeSummaryBlock)
 	}
 	if ragBlock != "" {
 		parts = append(parts, ragBlock)
+	}
+	if evidenceBlock != "" {
+		parts = append(parts, evidenceBlock)
 	}
 	return strings.Join(parts, "\n\n"), nil
 }

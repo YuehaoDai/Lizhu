@@ -51,6 +51,15 @@ func (r *Retriever) Search(ctx context.Context, query string, topK int) ([]Searc
 	}
 	defer c.Close()
 
+	// collection 不存在说明尚未入库任何知识，直接返回空结果
+	exists, err := c.HasCollection(ctx, r.cfg.Collection)
+	if err != nil {
+		return nil, fmt.Errorf("check collection: %w", err)
+	}
+	if !exists {
+		return nil, nil
+	}
+
 	// 确保 collection 已加载
 	if err := c.LoadCollection(ctx, r.cfg.Collection, false); err != nil {
 		return nil, fmt.Errorf("load collection: %w", err)
