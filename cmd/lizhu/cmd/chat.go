@@ -54,7 +54,8 @@ func runChatCLI(ctx context.Context) error {
 	for {
 		raw, err := line.Prompt("修行者 › ")
 		if err != nil {
-			// Ctrl+C 或 EOF，保存本次完整会话概要
+			// Ctrl+C 或 EOF，先等后台持久化完成，再保存完整会话概要
+			agent.WaitPersist()
 			if len(history) > 0 {
 				if perr := agent.PersistFullSession(ctx, history); perr != nil {
 					fmt.Fprintf(os.Stderr, "[警告] 会话记录保存失败: %v\n", perr)
@@ -70,6 +71,7 @@ func runChatCLI(ctx context.Context) error {
 		switch input {
 		case "/quit", "/exit", "/q":
 			fmt.Printf("%s：修行路漫漫，保重。\n", label)
+			agent.WaitPersist()
 			if len(history) > 0 {
 				if perr := agent.PersistFullSession(ctx, history); perr != nil {
 					fmt.Fprintf(os.Stderr, "[警告] 会话记录保存失败: %v\n", perr)

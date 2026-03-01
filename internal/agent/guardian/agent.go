@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/YuehaoDai/lizhu/internal/agent/librarian"
@@ -43,16 +44,20 @@ type Config struct {
 
 // Agent 护道人智能体。
 type Agent struct {
-	cfg       Config
-	model     model.ChatModel
-	loader    *worldview.Loader
-	repo      *episodic.Repository
-	retriever *knowledge.Retriever
-	librarian *librarian.Agent
+	cfg          Config
+	model        model.ChatModel
+	loader       *worldview.Loader
+	repo         *episodic.Repository
+	retriever    *knowledge.Retriever
+	librarian    *librarian.Agent
+	persistWg    sync.WaitGroup // 追踪后台持久化 goroutine，退出前等待完成
 }
 
 // PersonaName 返回护道人显示名称（空字符串表示使用默认"护道人"）。
 func (a *Agent) PersonaName() string { return a.cfg.PersonaName }
+
+// WaitPersist 等待所有后台持久化 goroutine 完成，应在程序退出前调用。
+func (a *Agent) WaitPersist() { a.persistWg.Wait() }
 
 // New 创建护道人 Agent。
 func New(ctx context.Context, cfg Config, repo *episodic.Repository) (*Agent, error) {
@@ -193,21 +198,23 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 				continue
 			}
 
-			visibleReply := fullReply.String()
-			go func() {
-				defer stream.Close()
-				var tail strings.Builder
-				for {
-					c, e := stream.Recv()
-					if e != nil {
-						break
-					}
-					tail.WriteString(c.Content)
+		visibleReply := fullReply.String()
+		a.persistWg.Add(1)
+		go func() {
+			defer a.persistWg.Done()
+			defer stream.Close()
+			var tail strings.Builder
+			for {
+				c, e := stream.Recv()
+				if e != nil {
+					break
 				}
-				if perr := a.persistEvaluation(context.Background(), visibleReply+tail.String()); perr != nil {
-					fmt.Printf("[警告] 修行档案持久化失败: %v\n", perr)
-				}
-			}()
+				tail.WriteString(c.Content)
+			}
+			if perr := a.persistEvaluation(context.Background(), visibleReply+tail.String()); perr != nil {
+				fmt.Printf("[警告] 修行档案持久化失败: %v\n", perr)
+			}
+		}()
 
 			newHistory := append(history,
 				schema.UserMessage(userInput),

@@ -80,7 +80,7 @@ func (a *Agent) persistEvaluation(ctx context.Context, response string) error {
 		tm := &episodic.ToolMastery{
 			UserID:    a.cfg.UserID,
 			ToolName:  u.Tool,
-			Category:  u.Category,
+			Category:  normCategory(u.Category),
 			Score:     u.Score,
 			LevelName: episodic.ScoreToLevel(u.Score),
 			Evidence:  u.Evidence,
@@ -151,6 +151,28 @@ func (a *Agent) PersistFullSession(ctx context.Context, history []*schema.Messag
 		RawResponse:     lastReply,
 	}
 	return a.repo.SaveSession(ctx, session)
+}
+
+// normCategory 将 LLM 可能输出的中/英文类别名统一映射为 status.go 使用的英文 key。
+func normCategory(c string) string {
+	switch c {
+	case "本命法宝", "primary_weapon":
+		return "primary_weapon"
+	case "AI法器", "ai_tool":
+		return "ai_tool"
+	case "符箓", "fulu":
+		return "fulu"
+	case "护山大阵", "zhenfa":
+		return "zhenfa"
+	case "观星镜", "telescope":
+		return "telescope"
+	case "法家戒尺", "quality":
+		return "quality"
+	case "三教修为", "philosophy":
+		return "philosophy"
+	default:
+		return c // 未知类别原样保留
+	}
 }
 
 // zeroIfNeg 将负数归零，用于过滤模式 B 中填写的 -1 占位值。
