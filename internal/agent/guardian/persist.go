@@ -3,9 +3,11 @@ package guardian
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/YuehaoDai/lizhu/internal/memory/episodic"
+	"github.com/cloudwego/eino/schema"
 )
 
 // persistEvaluation 解析 LLM 响应中的评估 JSON，
@@ -90,16 +92,42 @@ func (a *Agent) persistEvaluation(ctx context.Context, response string) error {
 	return nil
 }
 
-// persistSession 在普通护道对话（Mode B）结束后保存轻量级会话记录。
-// 不含评估分数，仅记录会话发生（用于"初次相见"逻辑与历史摘要注入）。
-func (a *Agent) persistSession(ctx context.Context, userInput, reply string) error {
+// PersistFullSession 在整次 chat 会话结束后保存会话概要记录。
+// history 为本次 chat 从开始到结束的完整多轮消息列表。
+// 不含评估分数，仅记录会话摘要（用于"初次相见"逻辑与历史摘要注入）。
+func (a *Agent) PersistFullSession(ctx context.Context, history []*schema.Message) error {
+	if len(history) == 0 {
+		return nil
+	}
+
+	// 将完整 history 拼装为可读对话文本
+	var conv strings.Builder
+	for _, msg := range history {
+		switch msg.Role {
+		case schema.User:
+			conv.WriteString("【修行者】\n" + msg.Content + "\n\n")
+		case schema.Assistant:
+			conv.WriteString("【护道人】\n" + msg.Content + "\n\n")
+		}
+	}
+	conversation := strings.TrimSpace(conv.String())
+
+	// 取最后一条 Assistant 消息作为降级 rawResponse
+	lastReply := ""
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == schema.Assistant {
+			lastReply = history[i].Content
+			break
+		}
+	}
+
 	var summary string
 
-	// 优先调用 Librarian 生成真正的语义摘要
+	// 优先调用 Librarian 生成整个会话的语义摘要
 	if a.librarian != nil {
-		sumCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		sumCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
-		s, err := a.librarian.SummarizeSession(sumCtx, a.cfg.UserName, userInput, reply)
+		s, err := a.librarian.SummarizeSession(sumCtx, a.cfg.UserName, conversation)
 		if err == nil && s != "" {
 			summary = s
 		} else {
@@ -107,9 +135,9 @@ func (a *Agent) persistSession(ctx context.Context, userInput, reply string) err
 		}
 	}
 
-	// 降级：Librarian 不可用时截取回复前 80 字
+	// 降级：Librarian 不可用时截取最后一条回复前 80 字
 	if summary == "" {
-		runes := []rune(reply)
+		runes := []rune(lastReply)
 		summary = string(runes)
 		if len(runes) > 80 {
 			summary = string(runes[:80]) + "……"
@@ -120,7 +148,7 @@ func (a *Agent) persistSession(ctx context.Context, userInput, reply string) err
 		UserID:          a.cfg.UserID,
 		Summary:         summary,
 		XinMoIdentified: []string{},
-		RawResponse:     reply,
+		RawResponse:     lastReply,
 	}
 	return a.repo.SaveSession(ctx, session)
 }

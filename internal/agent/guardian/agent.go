@@ -139,10 +139,6 @@ func (a *Agent) Chat(ctx context.Context, history []*schema.Message, userInput s
 		if err := a.persistEvaluation(ctx, reply); err != nil {
 			fmt.Printf("[警告] 修行档案持久化失败: %v\n", err)
 		}
-	} else {
-		if err := a.persistSession(ctx, userInput, reply); err != nil {
-			fmt.Printf("[警告] 会话记录保存失败: %v\n", err)
-		}
 	}
 
 	newHistory := append(history,
@@ -289,9 +285,6 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 	}
 
 	reply := fullReply.String()
-	if err := a.persistSession(ctx, userInput, reply); err != nil {
-		fmt.Printf("[警告] 会话记录保存失败: %v\n", err)
-	}
 	newHistory := append(history,
 		schema.UserMessage(userInput),
 		schema.AssistantMessage(reply, nil),

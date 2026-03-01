@@ -68,20 +68,17 @@ func (a *Agent) Summarize(ctx context.Context, filePath, content string) (string
 	return strings.TrimSpace(resp.Content), nil
 }
 
-// SummarizeSession 对一次护道对话生成简短摘要（一两句话），用于会话历史展示。
-// userName 为修行者名字，userInput 为用户输入，reply 为护道人回复。
-func (a *Agent) SummarizeSession(ctx context.Context, userName, userInput, reply string) (string, error) {
-	// 截断过长内容防止 token 溢出
-	if len(userInput) > 800 {
-		userInput = userInput[:800] + "……"
-	}
-	if len(reply) > 1200 {
-		reply = reply[:1200] + "……"
+// SummarizeSession 对完整多轮护道对话生成简短摘要，用于会话历史展示。
+// userName 为修行者名字，conversation 为格式化后的完整对话文本。
+func (a *Agent) SummarizeSession(ctx context.Context, userName, conversation string) (string, error) {
+	// 截断过长内容防止 token 溢出，保留前 4000 字符
+	if len(conversation) > 4000 {
+		conversation = conversation[:4000] + "……[对话过长，已截断]"
 	}
 
 	msgs := []*schema.Message{
 		schema.SystemMessage(sessionSummarizePrompt),
-		schema.UserMessage(buildSessionSummarizePrompt(userName, userInput, reply)),
+		schema.UserMessage(buildSessionSummarizePrompt(userName, conversation)),
 	}
 
 	resp, err := a.model.Generate(ctx, msgs)

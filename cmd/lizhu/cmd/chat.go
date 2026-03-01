@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/peterh/liner"
 	"github.com/cloudwego/eino/schema"
+	"github.com/peterh/liner"
 	"github.com/spf13/cobra"
 )
 
@@ -54,7 +54,12 @@ func runChatCLI(ctx context.Context) error {
 	for {
 		raw, err := line.Prompt("修行者 › ")
 		if err != nil {
-			// Ctrl+C 或 EOF
+			// Ctrl+C 或 EOF，保存本次完整会话概要
+			if len(history) > 0 {
+				if perr := agent.PersistFullSession(ctx, history); perr != nil {
+					fmt.Fprintf(os.Stderr, "[警告] 会话记录保存失败: %v\n", perr)
+				}
+			}
 			break
 		}
 		input := strings.TrimSpace(raw)
@@ -65,6 +70,11 @@ func runChatCLI(ctx context.Context) error {
 		switch input {
 		case "/quit", "/exit", "/q":
 			fmt.Printf("%s：修行路漫漫，保重。\n", label)
+			if len(history) > 0 {
+				if perr := agent.PersistFullSession(ctx, history); perr != nil {
+					fmt.Fprintf(os.Stderr, "[警告] 会话记录保存失败: %v\n", perr)
+				}
+			}
 			return nil
 		case "/clear":
 			history = nil
@@ -76,9 +86,9 @@ func runChatCLI(ctx context.Context) error {
 		case "/help":
 			printChatHelp()
 			continue
-	case "/assess":
-		input = "[修行者请求完整境界评估] /assess"
-	}
+		case "/assess":
+			input = "[修行者请求完整境界评估] /assess"
+		}
 
 		assess := input == "[修行者请求完整境界评估] /assess"
 
