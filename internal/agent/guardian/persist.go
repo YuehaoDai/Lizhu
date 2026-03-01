@@ -158,20 +158,24 @@ func normCategory(c string) string {
 	switch c {
 	case "本命法宝", "primary_weapon":
 		return "primary_weapon"
-	case "AI法器", "ai_tool":
-		return "ai_tool"
+	case "绘卷", "juanjuan":
+		return "juanjuan"
 	case "符箓", "fulu":
 		return "fulu"
+	case "方寸物", "fangcun":
+		return "fangcun"
 	case "护山大阵", "zhenfa":
 		return "zhenfa"
+	case "灵宠", "AI法器", "ai_tool", "linchong":
+		return "linchong"
 	case "观星镜", "telescope":
 		return "telescope"
 	case "法家戒尺", "quality":
 		return "quality"
 	case "三教修为", "philosophy":
-		return "philosophy"
+		return "philosophy" // 已移出法器谱，保留映射避免旧数据报错
 	default:
-		return c // 未知类别原样保留
+		return c
 	}
 }
 

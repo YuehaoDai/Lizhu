@@ -101,15 +101,16 @@ func printFullProfile(userName string, p *episodic.Profile, tools []*episodic.To
 	if len(tools) > 0 {
 		fmt.Println("\n" + sectionStyle.Render("【法器谱】"))
 		groupedTools := groupByCategory(tools)
-		categories := []string{"primary_weapon", "ai_tool", "fulu", "zhenfa", "telescope", "quality", "philosophy"}
+		categories := []string{"primary_weapon", "juanjuan", "fulu", "fangcun", "zhenfa", "linchong", "telescope", "quality"}
 		catNames := map[string]string{
 			"primary_weapon": "本命法宝",
-			"ai_tool":        "AI法器",
+			"juanjuan":       "绘卷",
 			"fulu":           "符箓",
+			"fangcun":        "方寸物",
 			"zhenfa":         "护山大阵",
+			"linchong":       "灵宠",
 			"telescope":      "观星镜",
 			"quality":        "法家戒尺",
-			"philosophy":     "三教修为",
 		}
 		for _, cat := range categories {
 			items, ok := groupedTools[cat]
