@@ -1,6 +1,8 @@
 # 二进制产物
 /lizhu
+/lizhu.exe
 /lizhu-server
+/lizhu-server.exe
 dist/
 bin/
 
