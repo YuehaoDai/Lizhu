@@ -358,6 +358,15 @@ func (a *Agent) buildSystemMessage(ctx context.Context, userInput string, assess
 		}
 	}
 
+	// 待完成任务块：始终注入，护道人负责追问进展和验收
+	taskBlock := ""
+	pendingTasks, taskErr := a.repo.GetPendingTasks(ctx, a.cfg.UserID)
+	if taskErr != nil {
+		fmt.Printf("[警告] 任务读取失败: %v\n", taskErr)
+	} else if len(pendingTasks) > 0 {
+		taskBlock = buildTaskBlock(pendingTasks)
+	}
+
 	parts := []string{worldviewPrompt, contextBlock}
 	if knowledgeSummaryBlock != "" {
 		parts = append(parts, knowledgeSummaryBlock)
@@ -367,6 +376,9 @@ func (a *Agent) buildSystemMessage(ctx context.Context, userInput string, assess
 	}
 	if evidenceBlock != "" {
 		parts = append(parts, evidenceBlock)
+	}
+	if taskBlock != "" {
+		parts = append(parts, taskBlock)
 	}
 	return strings.Join(parts, "\n\n"), nil
 }

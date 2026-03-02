@@ -136,6 +136,27 @@ func buildEvidenceBlock(items []*episodic.EvidenceItem) string {
 	return sb.String()
 }
 
+// buildTaskBlock 将待完成任务格式化为系统提示注入块，
+// 提醒护道人主动追问上次任务的进展，并在用户汇报完成时触发验收。
+func buildTaskBlock(tasks []*episodic.Task) string {
+	if len(tasks) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("========================\n")
+	sb.WriteString("【待完成修炼任务（请主动追问进展，若用户汇报完成请按验收标准评判）】\n")
+	sb.WriteString("========================\n")
+	for i, t := range tasks {
+		sb.WriteString(fmt.Sprintf(
+			"\n任务 %d：%s\n描述：%s\n验收标准：%s\n来源：%s\n",
+			i+1, t.Title, t.Description, t.AcceptanceCriteria, t.SourceEvidence,
+		))
+	}
+	sb.WriteString("\n提示：若修行者在本次对话中汇报了某项任务的完成情况，请对照验收标准判断是否通过，\n")
+	sb.WriteString("通过时在回复中明确告知，并在末尾附上标记 [TASK_DONE:<任务标题>]，格式严格遵守。\n")
+	return sb.String()
+}
+
 // buildRAGBlock 将检索到的知识块格式化为系统提示中的参考资料节。
 func buildRAGBlock(chunks []knowledge.SearchResult) string {
 	var sb strings.Builder

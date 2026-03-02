@@ -89,6 +89,51 @@ func (a *Agent) persistEvaluation(ctx context.Context, response string) error {
 			return fmt.Errorf("upsert tool mastery %q: %w", u.Tool, err)
 		}
 	}
+
+	// 4. 评估完成后触发任务生成（超过 2 个待完成任务时跳过）
+	if a.librarian != nil {
+		go func() {
+			taskCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+
+			pendingCount, countErr := a.repo.CountPendingTasks(taskCtx, a.cfg.UserID)
+			if countErr != nil {
+				fmt.Printf("[警告] 任务数量查询失败: %v\n", countErr)
+				return
+			}
+			if pendingCount >= 3 {
+				return
+			}
+
+			profileSummary := fmt.Sprintf(
+				"Go练气分: %d, AI练气分: %d, 武夫分: %d",
+				profile.GoLianqiScore, profile.AILianqiScore, profile.WufuScore,
+			)
+			rawTasks, taskErr := a.librarian.ExtractTasks(taskCtx, a.cfg.UserName, response, profileSummary, pendingCount)
+			if taskErr != nil {
+				fmt.Printf("[警告] 修炼任务生成失败: %v\n", taskErr)
+				return
+			}
+			var tasks []*episodic.Task
+			for _, rt := range rawTasks {
+				tasks = append(tasks, &episodic.Task{
+					UserID:             a.cfg.UserID,
+					Title:              rt.Title,
+					Description:        rt.Description,
+					AcceptanceCriteria: rt.AcceptanceCriteria,
+					Category:           rt.Category,
+					SourceEvidence:     rt.SourceEvidence,
+					TargetScoreHint:    rt.TargetScoreHint,
+				})
+			}
+			if saveErr := a.repo.SaveTasks(taskCtx, tasks); saveErr != nil {
+				fmt.Printf("[警告] 修炼任务保存失败: %v\n", saveErr)
+			} else if len(tasks) > 0 {
+				fmt.Printf("[任务单] 生成 %d 条修炼任务\n", len(tasks))
+			}
+		}()
+	}
+
 	return nil
 }
 
@@ -161,6 +206,9 @@ func (a *Agent) PersistFullSession(ctx context.Context, history []*schema.Messag
 		return result, fmt.Errorf("save session: %w", err)
 	}
 
+	// 检测护道人在回复中附上的 [TASK_DONE:<任务标题>] 验收标记，更新任务状态
+	a.processTaskDoneMarkers(ctx, history)
+
 	// 提炼能力证据条目（独立 timeout，失败不影响摘要保存）
 	if a.librarian != nil {
 		evCtx, evCancel := context.WithTimeout(ctx, 15*time.Second)
@@ -188,6 +236,53 @@ func (a *Agent) PersistFullSession(ctx context.Context, history []*schema.Messag
 	}
 
 	return result, nil
+}
+
+// processTaskDoneMarkers 扫描最新一轮 Assistant 回复，检测 [TASK_DONE:<标题>] 标记，
+// 匹配待完成任务并将其标记为 done。
+func (a *Agent) processTaskDoneMarkers(ctx context.Context, history []*schema.Message) {
+	lastReply := ""
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == schema.Assistant {
+			lastReply = history[i].Content
+			break
+		}
+	}
+	if lastReply == "" || !strings.Contains(lastReply, "[TASK_DONE:") {
+		return
+	}
+
+	pendingTasks, err := a.repo.GetPendingTasks(ctx, a.cfg.UserID)
+	if err != nil || len(pendingTasks) == 0 {
+		return
+	}
+
+	// 提取所有 [TASK_DONE:<标题>] 标记
+	remaining := lastReply
+	for {
+		start := strings.Index(remaining, "[TASK_DONE:")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(remaining[start:], "]")
+		if end < 0 {
+			break
+		}
+		doneTitle := remaining[start+len("[TASK_DONE:") : start+end]
+		remaining = remaining[start+end+1:]
+
+		// 模糊匹配：任务标题包含 doneTitle 或 doneTitle 包含任务标题
+		for _, t := range pendingTasks {
+			if strings.Contains(t.Title, doneTitle) || strings.Contains(doneTitle, t.Title) {
+				if updateErr := a.repo.UpdateTaskStatus(ctx, t.ID, "done"); updateErr != nil {
+					fmt.Printf("[警告] 更新任务状态失败: %v\n", updateErr)
+				} else {
+					fmt.Printf("[任务单] 任务完成：%s\n", t.Title)
+				}
+				break
+			}
+		}
+	}
 }
 
 // normCategory 将 LLM 可能输出的中/英文类别名统一映射为 status.go 使用的英文 key。
