@@ -148,7 +148,7 @@ sequenceDiagram
     LLM-->>GA: <eval_json>...</eval_json>（后台静默接收）
     Note over CLI: 检测到 <eval_json> 立即截断打印
     GA->>GA: 后台 goroutine 解析 eval_json
-    GA->>DB: persistEvaluation（更新档案、法器谱）
+    GA->>DB: persistEvaluation（更新档案、法宝库）
     DB-->>GA: OK
 ```
 
@@ -192,7 +192,7 @@ lizhu/
 │   │   └── milvus.go        # Collection 初始化与连通性探测
 │   │
 │   ├── memory/episodic/ # 情节记忆（PostgreSQL）
-│   │   └── repo.go          # 档案 CRUD、会话摘要、法器谱
+│   │   └── repo.go          # 档案 CRUD、会话摘要、法宝库
 │   │
 │   ├── worldview/       # 世界观 YAML 加载器
 │   │   ├── loader.go        # 多文件加载、路径过滤、评估/对话双模式 Prompt
@@ -277,7 +277,7 @@ go build -o lizhu ./cmd/lizhu
 
 ```
 lizhu chat                  与护道人开始修行对话
-lizhu status                查看完整修行档案与法器谱（彩色进度条）
+lizhu status                查看完整修行档案与法宝库（彩色进度条）
 lizhu note add <文件路径>   将笔记/代码文件入库到 RAG 知识库
 lizhu note list             列出所有已索引文件及摘要
 ```
