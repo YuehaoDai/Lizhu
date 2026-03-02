@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 法器谱表：独立追踪每个工具的掌握程度
+-- 法宝库表：独立追踪每个工具的掌握程度
 CREATE TABLE IF NOT EXISTS tool_mastery (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id    TEXT NOT NULL DEFAULT 'default',

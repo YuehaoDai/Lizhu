@@ -263,7 +263,7 @@ func printChatHelp() {
 	fmt.Print(`
 可用命令：
   /assess  — 主动请求完整境界评估与破境方案
-  /status  — 查看当前修行档案与法器谱
+  /status  — 查看当前修行档案与法宝库
   /clear   — 清空本次会话历史（不影响已保存的档案）
   /quit    — 退出对话
   /help    — 显示此帮助

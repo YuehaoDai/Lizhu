@@ -67,9 +67,9 @@ func buildContextBlock(
 		}
 	}
 
-	// 法器谱（前10项）
+	// 法宝库（前10项）
 	if len(toolMastery) > 0 {
-		sb.WriteString("\n当前法器谱（部分）：\n")
+		sb.WriteString("\n当前法宝库（部分）：\n")
 		limit := 10
 		if len(toolMastery) < limit {
 			limit = len(toolMastery)

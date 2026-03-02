@@ -1,4 +1,4 @@
-﻿package guardian
+package guardian
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 )
 
 // persistEvaluation 解析 LLM 响应中的评估 JSON，
-// 更新修行档案、保存会话记录、更新法器谱。
+// 更新修行档案、保存会话记录、更新法宝库。
 func (a *Agent) persistEvaluation(ctx context.Context, response string) error {
 	eval, err := ParseEvalResult(response)
 	if err != nil {
@@ -72,7 +72,7 @@ func (a *Agent) persistEvaluation(ctx context.Context, response string) error {
 		return fmt.Errorf("save session: %w", err)
 	}
 
-	// 3. 更新法器谱
+	// 3. 更新法宝库
 	for _, u := range eval.ToolMasteryUpdates {
 		if u.Tool == "" || u.Score <= 0 {
 			continue
@@ -210,7 +210,7 @@ func normCategory(c string) string {
 	case "法家戒尺", "quality":
 		return "quality"
 	case "三教修为", "philosophy":
-		return "philosophy" // 已移出法器谱，保留映射避免旧数据报错
+		return "philosophy" // 已移出法宝库，保留映射避免旧数据报错
 	default:
 		return c
 	}

@@ -1,4 +1,4 @@
-﻿package cmd
+package cmd
 
 import (
 	"context"
@@ -32,8 +32,8 @@ var (
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "查看修行档案与法器谱",
-	Long:  `展示当前修行者的完整档案，包括双轨练气士境界、武夫境界、法器谱及近期心魔记录。`,
+	Short: "查看修行档案与法宝库",
+	Long:  `展示当前修行者的完整档案，包括双轨练气士境界、武夫境界、法宝库及近期心魔记录。`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runStatus(cmd.Context())
 	},
@@ -47,7 +47,7 @@ func runStatus(ctx context.Context) error {
 
 	toolMastery, err := repo.GetToolMastery(ctx, "default")
 	if err != nil {
-		return fmt.Errorf("读取法器谱失败: %w", err)
+		return fmt.Errorf("读取法宝库失败: %w", err)
 	}
 
 	sessions, err := repo.GetRecentSessions(ctx, "default", 3)
@@ -97,9 +97,9 @@ func printFullProfile(userName string, p *episodic.Profile, tools []*episodic.To
 		renderBar(p.WufuScore), p.WufuScore)
 	fmt.Printf("  第%d境·%s\n", p.WufuLevel, highlightStyle.Render(p.WufuLevelName))
 
-	// 法器谱
+	// 法宝库
 	if len(tools) > 0 {
-		fmt.Println("\n" + sectionStyle.Render("【法器谱】"))
+		fmt.Println("\n" + sectionStyle.Render("【法宝库】"))
 		groupedTools := groupByCategory(tools)
 		categories := []string{"primary_weapon", "juanjuan", "fulu", "fangcun", "zhenfa", "linchong", "telescope", "quality"}
 		catNames := map[string]string{
