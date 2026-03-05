@@ -46,6 +46,7 @@ type Config struct {
 type Agent struct {
 	cfg          Config
 	model        model.ChatModel
+	toolModel    model.ToolCallingChatModel // 绑定 browse_web 工具后的模型实例（可为 nil）
 	loader       *worldview.Loader
 	repo         *episodic.Repository
 	retriever    *knowledge.Retriever
@@ -90,9 +91,21 @@ func New(ctx context.Context, cfg Config, repo *episodic.Repository) (*Agent, er
 		libAgent = nil
 	}
 
+	// 尝试绑定 browse_web 工具，失败时降级为 nil（不影响核心对话功能）
+	var toolModel model.ToolCallingChatModel
+	if tc, ok := m.(model.ToolCallingChatModel); ok {
+		tm, err := tc.WithTools([]*schema.ToolInfo{browseWebToolInfo})
+		if err != nil {
+			fmt.Printf("[警告] 网页浏览工具绑定失败，本次会话禁用浏览功能: %v\n", err)
+		} else {
+			toolModel = tm
+		}
+	}
+
 	return &Agent{
 		cfg:       cfg,
 		model:     m,
+		toolModel: toolModel,
 		loader:    worldview.NewLoader(cfg.WorldViewDir),
 		repo:      repo,
 		retriever: knowledge.NewRetriever(cfg.KnowledgeCfg),
@@ -166,6 +179,12 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 		return "", nil, fmt.Errorf("build system message: %w", err)
 	}
 	messages := buildMessages(systemMsg, history, userInput)
+
+	// ── Mode B + tool calling：有 toolModel 时走 agentic loop ──
+	// 仅在非评估模式下启用，以免干扰 eval_json 的解析流程。
+	if !assess && a.toolModel != nil {
+		return a.chatStreamWithTools(ctx, messages, history, userInput, onToken)
+	}
 
 	stream, err := a.model.Stream(ctx, messages)
 	if err != nil {
@@ -381,6 +400,248 @@ func (a *Agent) buildSystemMessage(ctx context.Context, userInput string, assess
 		parts = append(parts, taskBlock)
 	}
 	return strings.Join(parts, "\n\n"), nil
+}
+
+// chatStreamWithTools 实现带 browse_web 工具的 agentic loop（仅 Mode B 调用）。
+//
+// 流式优先架构：
+// 第一步：以流式方式发出请求（toolModel.Stream）。
+//   - 若模型输出 content：直接流式输出（应用 Mode B eval_json 抑制），无额外 LLM 调用。
+//   - 若模型输出 tool_calls delta：静默累积，流结束后执行工具，进入第二步。
+// 第二步（仅有工具调用时）：将工具结果注入消息链，再次流式输出最终回复。
+func (a *Agent) chatStreamWithTools(
+	ctx context.Context,
+	messages []*schema.Message,
+	history []*schema.Message,
+	userInput string,
+	onToken func(string),
+) (string, []*schema.Message, error) {
+
+	stream, err := a.toolModel.Stream(ctx, messages)
+	if err != nil {
+		return "", nil, fmt.Errorf("llm stream (tool): %w", err)
+	}
+	defer stream.Close()
+
+	// Mode B eval_json 抑制状态（文本路径）
+	var textBuf strings.Builder
+	textSuppressed := false
+	const evalTrig = "<eval_json>"
+	const evalWin = len(evalTrig) - 1
+	var fullTextReply strings.Builder
+
+	// Tool call 增量累积（tool call 路径）
+	type tcAccum struct {
+		id, typ, name string
+		argsBuf       strings.Builder
+	}
+	tcAccumMap := map[int]*tcAccum{}
+	isToolMode := false
+
+	for {
+		chunk, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return "", nil, fmt.Errorf("stream recv (tool first): %w", err)
+		}
+
+		// 累积 tool call delta（增量 JSON 参数）
+		for _, tc := range chunk.ToolCalls {
+			isToolMode = true
+			idx := 0
+			if tc.Index != nil {
+				idx = *tc.Index
+			}
+			acc := tcAccumMap[idx]
+			if acc == nil {
+				acc = &tcAccum{}
+				tcAccumMap[idx] = acc
+			}
+			if tc.ID != "" {
+				acc.id = tc.ID
+			}
+			if tc.Type != "" {
+				acc.typ = tc.Type
+			}
+			if tc.Function.Name != "" {
+				acc.name = tc.Function.Name
+			}
+			acc.argsBuf.WriteString(tc.Function.Arguments)
+		}
+
+		// 文本路径：仅在非 tool mode 时流式输出，同时抑制 eval_json
+		if !isToolMode && chunk.Content != "" {
+			if textSuppressed {
+				continue
+			}
+			textBuf.WriteString(chunk.Content)
+			s := textBuf.String()
+			if idx := strings.Index(s, evalTrig); idx >= 0 {
+				textSuppressed = true
+				printUntil := idx
+				if nl := strings.LastIndex(s[:idx], "\n"); nl >= 0 {
+					printUntil = nl + 1
+				}
+				visible := s[:printUntil]
+				if visible != "" {
+					onToken(visible)
+					fullTextReply.WriteString(visible)
+				}
+				textBuf.Reset()
+				continue
+			}
+			safe := len(s) - evalWin
+			if safe > 0 {
+				onToken(s[:safe])
+				fullTextReply.WriteString(s[:safe])
+				tail := s[safe:]
+				textBuf.Reset()
+				textBuf.WriteString(tail)
+			}
+		}
+	}
+
+	// 刷出文本路径缓冲区尾部
+	if !isToolMode && !textSuppressed && textBuf.Len() > 0 {
+		onToken(textBuf.String())
+		fullTextReply.WriteString(textBuf.String())
+	}
+
+	// ── 文本路径：已流式输出完成 ──
+	if !isToolMode {
+		reply := strings.TrimSpace(fullTextReply.String())
+		newHistory := append(history,
+			schema.UserMessage(userInput),
+			schema.AssistantMessage(reply, nil),
+		)
+		return reply, newHistory, nil
+	}
+
+	// ── 工具调用路径：重建完整 ToolCalls，执行工具，第二步流式输出 ──
+	onToken("\n[护道人正在查阅资料...]\n\n")
+
+	toolCalls := make([]schema.ToolCall, 0, len(tcAccumMap))
+	for i := 0; i < len(tcAccumMap); i++ {
+		acc := tcAccumMap[i]
+		toolCalls = append(toolCalls, schema.ToolCall{
+			ID:   acc.id,
+			Type: acc.typ,
+			Function: schema.FunctionCall{
+				Name:      acc.name,
+				Arguments: acc.argsBuf.String(),
+			},
+		})
+	}
+
+	assistantMsg := schema.AssistantMessage("", toolCalls)
+	toolMessages := make([]*schema.Message, 0, len(messages)+1+len(toolCalls))
+	toolMessages = append(toolMessages, messages...)
+	toolMessages = append(toolMessages, assistantMsg)
+
+	for _, tc := range toolCalls {
+		var toolResult string
+		if tc.Function.Name == "browse_web" {
+			url := extractJSONString(tc.Function.Arguments, "url")
+			if url == "" {
+				toolResult = "错误：url 参数为空"
+			} else {
+				content, fetchErr := fetchWebContent(url)
+				if fetchErr != nil {
+					toolResult = fmt.Sprintf("网页抓取失败: %v", fetchErr)
+				} else {
+					toolResult = content
+				}
+			}
+		} else {
+			toolResult = fmt.Sprintf("未知工具: %s", tc.Function.Name)
+		}
+		toolMessages = append(toolMessages, schema.ToolMessage(toolResult, tc.ID))
+	}
+
+	// 第二步：流式输出含工具结果的最终回复（同样抑制 eval_json）
+	stream2, err := a.toolModel.Stream(ctx, toolMessages)
+	if err != nil {
+		return "", nil, fmt.Errorf("llm stream (after tool): %w", err)
+	}
+	defer stream2.Close()
+
+	var fullReply strings.Builder
+	var s2Buf strings.Builder
+	s2Suppressed := false
+
+	for {
+		chunk, err := stream2.Recv()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return "", nil, fmt.Errorf("stream recv (after tool): %w", err)
+		}
+		if chunk.Content == "" || s2Suppressed {
+			continue
+		}
+		s2Buf.WriteString(chunk.Content)
+		s := s2Buf.String()
+		if idx := strings.Index(s, evalTrig); idx >= 0 {
+			s2Suppressed = true
+			printUntil := idx
+			if nl := strings.LastIndex(s[:idx], "\n"); nl >= 0 {
+				printUntil = nl + 1
+			}
+			visible := s[:printUntil]
+			if visible != "" {
+				onToken(visible)
+				fullReply.WriteString(visible)
+			}
+			s2Buf.Reset()
+			continue
+		}
+		safe := len(s) - evalWin
+		if safe > 0 {
+			onToken(s[:safe])
+			fullReply.WriteString(s[:safe])
+			s2Buf.Reset()
+			s2Buf.WriteString(s[safe:])
+		}
+	}
+	if !s2Suppressed && s2Buf.Len() > 0 {
+		onToken(s2Buf.String())
+		fullReply.WriteString(s2Buf.String())
+	}
+
+	reply := fullReply.String()
+	newHistory := append(history,
+		schema.UserMessage(userInput),
+		schema.AssistantMessage(reply, nil),
+	)
+	return reply, newHistory, nil
+}
+
+// extractJSONString 从简单 JSON 对象字符串中提取指定 key 的字符串值。
+// 仅用于解析 tool call arguments，不依赖 encoding/json 以减少开销。
+func extractJSONString(jsonStr, key string) string {
+	needle := `"` + key + `"`
+	idx := strings.Index(jsonStr, needle)
+	if idx < 0 {
+		return ""
+	}
+	rest := jsonStr[idx+len(needle):]
+	colon := strings.Index(rest, ":")
+	if colon < 0 {
+		return ""
+	}
+	rest = strings.TrimSpace(rest[colon+1:])
+	if len(rest) == 0 || rest[0] != '"' {
+		return ""
+	}
+	rest = rest[1:]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
 }
 
 // buildMessages 组装 [system, ...history, user] 消息列表。

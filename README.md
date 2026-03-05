@@ -96,6 +96,7 @@
 | **任务积压保护** | 待完成任务 ≥ 3 条时不再生成新任务，防止任务越积越多带来压迫感 |
 | **自然语言验收** | 护道人检测到回复中的 `[TASK_DONE:<标题>]` 标记后自动将任务标记为完成，无需修行者执行额外命令 |
 | **`/tasks` 命令** | 随时在对话中输入 `/tasks`，列出全部待完成任务的标题、描述与验收标准 |
+| **联网查阅** | 护道人通过 LLM Tool Calling 自主决定是否抓取网页；当你提供网址或问题需要实时信息时，自动拉取页面纯文本整合进回复，无需额外命令 |
 
 ---
 
@@ -188,7 +189,8 @@ lizhu/
 ├── internal/
 │   ├── agent/
 │   │   ├── guardian/    # 护道人 Agent
-│   │   │   ├── agent.go     # 核心逻辑：上下文构建、RAG 注入、流式输出
+│   │   │   ├── agent.go     # 核心逻辑：上下文构建、RAG 注入、流式输出、工具调用 agentic loop
+│   │   │   ├── browse.go    # 联网查阅工具：browse_web Tool 定义与 fetchWebContent 实现
 │   │   │   ├── context.go   # 系统提示组装
 │   │   │   └── persist.go   # 评估结果与会话摘要持久化
 │   │   └── librarian/   # 知识整理官 Agent
@@ -608,7 +610,8 @@ migrate -database "postgres://lizhu:lizhu@localhost:5432/lizhu?sslmode=disable" 
         结构化能力证据体系（跨对话积累，/assess 时自动注入）
         整次会话摘要 + 退出进度展示
 
-三期 🔜  [近] 修炼任务单：评估后生成锚定弱点的具体任务，跨对话追踪验收
+三期 🔜  [✅] 修炼任务单：评估后生成锚定弱点的具体任务，跨对话追踪验收
+         [✅] 联网查阅：LLM Tool Calling 驱动，护道人自主决定是否实时查询网页
          [近] 修行周报：Librarian 聚合多次会话，生成成长复盘
          [中] MCP Server：将护道人记忆层暴露为标准接口，接入 Cursor / Claude Desktop
          [中] Web 仪表盘：成长曲线、境界时间线、法宝库热力图
