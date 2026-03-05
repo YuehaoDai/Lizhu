@@ -25,6 +25,7 @@
 - [骊珠是什么](#骊珠是什么)
 - [功能特性](#功能特性)
 - [系统架构](#系统架构)
+- [系统工作原理](#系统工作原理)
 - [快速开始](#快速开始)
 - [CLI 命令](#cli-命令)
 - [完整配置说明](#完整配置说明)
@@ -86,6 +87,16 @@
 | **lipgloss 彩色档案** | `lizhu status` 输出彩色境界进度条与分区标题高亮 |
 | **能力证据体系** | 对话结束时 Librarian 自动提炼 3~5 条结构化证据（工具/类别/置信度 1-5），存入 `ability_evidence` 表；`/assess` 时自动注入系统提示，实现跨对话长期记忆 |
 | **退出进度展示** | `/quit` 或 Ctrl+C 后逐行展示封存步骤（等待评估同步→生成摘要→封存证据），操作完毕显示提示后关闭 |
+
+### 三期新增能力
+
+| 特性 | 说明 |
+|------|------|
+| **修炼任务单** | `/assess` 结束后，Librarian 自动从弱点中提炼 1-2 条具体可执行任务（含明确验收标准），持久化至 `tasks` 表；护道人在下次会话中主动追问进展，用户汇报完成后自动验收并更新状态 |
+| **任务积压保护** | 待完成任务 ≥ 3 条时不再生成新任务，防止任务越积越多带来压迫感 |
+| **自然语言验收** | 护道人检测到回复中的 `[TASK_DONE:<标题>]` 标记后自动将任务标记为完成，无需修行者执行额外命令 |
+| **`/tasks` 命令** | 随时在对话中输入 `/tasks`，列出全部待完成任务的标题、描述与验收标准 |
+| **联网查阅** | 护道人通过 LLM Tool Calling 自主决定是否抓取网页；当你提供网址或问题需要实时信息时，自动拉取页面纯文本整合进回复，无需额外命令 |
 
 ---
 
@@ -178,7 +189,8 @@ lizhu/
 ├── internal/
 │   ├── agent/
 │   │   ├── guardian/    # 护道人 Agent
-│   │   │   ├── agent.go     # 核心逻辑：上下文构建、RAG 注入、流式输出
+│   │   │   ├── agent.go     # 核心逻辑：上下文构建、RAG 注入、流式输出、工具调用 agentic loop
+│   │   │   ├── browse.go    # 联网查阅工具：browse_web Tool 定义与 fetchWebContent 实现
 │   │   │   ├── context.go   # 系统提示组装
 │   │   │   └── persist.go   # 评估结果与会话摘要持久化
 │   │   └── librarian/   # 知识整理官 Agent
@@ -205,6 +217,85 @@ lizhu/
 ├── notes/               # 用户笔记目录（lizhu note add 入库源）
 └── lizhu.yaml           # 用户配置文件（不入 Git）
 ```
+
+---
+
+## 系统工作原理
+
+### 护道人每次对话看到什么
+
+每次你发送一条消息，Guardian Agent 会把以下内容拼成一个完整的 System Prompt 发给 LLM：
+
+```
+[世界观 YAML 节]          ← configs/worldview/ 下所有 YAML 拼装
+[修行者身份与档案]         ← cultivation_profile 表：境界分、法宝掌握度
+[近期会话摘要]             ← sessions 表最近 N 条（history_window 控制）
+[知识文件摘要列表]         ← knowledge_files 表：note add 过的文件名+摘要
+[RAG 检索结果]             ← Milvus 按当前输入相似度检索 top-3 知识块（仅 enabled=true 时）
+[待完成任务单]             ← tasks 表 status=pending 的任务（三期新增）
+[历史能力证据]             ← ability_evidence 表最近 20 条（仅 /assess 模式注入）
+```
+
+这就是为什么护道人"认得你"——每次对话他都拿到了你所有的历史积累，而不是空白上下文。
+
+### 记忆层架构
+
+骊珠维护四类持久记忆，各司其职：
+
+| 记忆类型 | 存储位置 | 更新时机 | 用途 |
+|------|------|------|------|
+| **修行档案** | `cultivation_profile` | `/assess` 评估后 | 境界分、法宝掌握度，护道人对你的"当前认知" |
+| **会话摘要** | `sessions` | 每次退出后 | 近期对话主题，提供短期上下文连续性 |
+| **能力证据** | `ability_evidence` | 每次退出后 | 具体技术事实（工具/置信度），评估时作为"证明材料"注入 |
+| **知识文件** | `knowledge_files` + Milvus | `lizhu note add` 时 | 笔记/代码语义索引，对话时自动召回 |
+
+### `/assess` 评估完整流程
+
+```
+你输入 /assess
+    │
+    ▼
+Guardian 构建 System Prompt（加入 eval_json 格式规范 + 历史能力证据）
+    │
+    ▼
+LLM 流式输出（可见部分打印给你）
+检测到 <eval_json> 标签 → 立即截断打印，后台 goroutine 接管
+    │
+    ├─► 解析 eval_json → 更新 cultivation_profile（境界分 + 法宝）
+    │
+    └─► Librarian Agent 异步生成修炼任务（锚定最近弱点）→ 存入 tasks 表
+
+你退出对话时（/quit）：
+    ├─► 等待评估 goroutine 完成
+    ├─► Librarian 生成会话摘要 → 存入 sessions
+    └─► Librarian 提炼能力证据 → 存入 ability_evidence
+```
+
+### 修炼任务单工作机制
+
+任务不是每次对话都生成，而是与评估绑定：
+
+```
+/assess 完成
+    │ Librarian 收到：本次对话 + 最近 10 条能力证据 + 近 3 次会话摘要 + 当前档案分数
+    │ → 锚定近期学习方向，找 1-2 个薄弱点
+    │ → 生成带明确验收标准的具体任务（待完成任务 ≥ 3 时跳过）
+    ▼
+tasks 表写入（status = pending）
+
+下次 lizhu chat
+    │ System Prompt 自动注入待完成任务
+    │ → 护道人主动追问进展
+    ▼
+你汇报完成情况
+    │ 护道人对照 acceptance_criteria 判断
+    │ → 通过：回复中附上 [TASK_DONE:<标题>]
+    │ → 系统自动更新 tasks.status = done
+    ▼
+/tasks 命令随时查看剩余任务
+```
+
+**关键约束**：任务必须有明确的可验证产出（如"提交一段运行代码"），而非"学习X"这类无法验收的目标。
 
 ---
 
@@ -287,6 +378,7 @@ lizhu note list             列出所有已索引文件及摘要
 | 命令 | 功能 |
 |------|------|
 | `/assess` | 主动请求完整境界评估与破境方案（强制评估模式，LLM 必须给出完整报告）|
+| `/tasks` | 查看当前修炼任务单（标题、描述、验收标准）|
 | `/status` | 在对话中查看当前修行档案 |
 | `/clear` | 清空本次会话历史（已保存档案不受影响）|
 | `/quit` / `/exit` | 退出对话 |
@@ -492,6 +584,7 @@ go vet ./...
 | `000001_init.up.sql` | profiles、sessions、tool_mastery 表 |
 | `000002_knowledge_files.up.sql` | knowledge_files 表（含 summary 字段）|
 | `000003_ability_evidence.up.sql` | ability_evidence 表（结构化能力证据，含 category / tool / confidence 字段）|
+| `000004_tasks.up.sql` | tasks 表（修炼任务单，含 acceptance_criteria / status / completed_at 字段）|
 
 ```bash
 # 手动查看迁移状态（需安装 migrate CLI）
@@ -503,6 +596,8 @@ migrate -database "postgres://lizhu:lizhu@localhost:5432/lizhu?sslmode=disable" 
 
 ## 交付路线
 
+骊珠的远期形态是 **Developer Growth OS**——不是一个等你开口的问答工具，而是主动感知你成长状态的开发者操作系统。
+
 ```
 一期 ✅  CLI 交互式对话
         修行档案持久化（PostgreSQL）
@@ -510,22 +605,22 @@ migrate -database "postgres://lizhu:lizhu@localhost:5432/lizhu?sslmode=disable" 
         护道人人格系统
 
 二期 ✅  Milvus RAG 知识库
-        知识整理官 Agent（笔记摘要提炼）
+        知识整理官 Agent（笔记摘要 + 能力证据提炼）
         评估/对话双模式流式输出
-        lipgloss 彩色档案展示
-        法宝体系世界观精确分类
-        整次会话摘要（替代逐轮摘要）
         结构化能力证据体系（跨对话积累，/assess 时自动注入）
-        退出进度展示（封存步骤逐行打印）
+        整次会话摘要 + 退出进度展示
 
-三期 🔜  Web API + 精美 Web UI
-        酷炫修行周报/月报
-        多 Agent 协作（对练陪练、考官等）
-        移动端 / 微信小程序
+三期 🔜  [✅] 修炼任务单：评估后生成锚定弱点的具体任务，跨对话追踪验收
+         [✅] 联网查阅：LLM Tool Calling 驱动，护道人自主决定是否实时查询网页
+         [近] 修行周报：Librarian 聚合多次会话，生成成长复盘
+         [中] MCP Server：将护道人记忆层暴露为标准接口，接入 Cursor / Claude Desktop
+         [中] Web 仪表盘：成长曲线、境界时间线、法宝库热力图
+         [远] 多 Agent 协作：考官出题、对练陪练（费曼技巧数字化）
+         [远] 主动感知：Git hook + 沉默触发推送，无需你主动喂养
 ```
 
 ---
 
 <p align="center">
-  <sub>骊珠洞天曾有一位护道人，他选择留下来。</sub>
+  <sub>洞天已开，此后同修。</sub>
 </p>

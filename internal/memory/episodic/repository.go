@@ -58,6 +58,21 @@ type EvidenceItem struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// Task 代表一条修炼任务单条目。
+type Task struct {
+	ID                 string     `json:"id"`
+	UserID             string     `json:"user_id"`
+	Title              string     `json:"title"`
+	Description        string     `json:"description"`
+	AcceptanceCriteria string     `json:"acceptance_criteria"`
+	Category           string     `json:"category"`    // go_lianqi / ai_lianqi / wufu
+	SourceEvidence     string     `json:"source_evidence"`
+	TargetScoreHint    int        `json:"target_score_hint"`
+	Status             string     `json:"status"`      // pending / done / abandoned
+	CreatedAt          time.Time  `json:"created_at"`
+	CompletedAt        *time.Time `json:"completed_at"`
+}
+
 // ToolMastery 代表某个工具的掌握程度记录。
 type ToolMastery struct {
 	UserID    string    `json:"user_id"`
@@ -292,6 +307,78 @@ func (r *Repository) GetRecentEvidence(ctx context.Context, userID string, n int
 		result = append(result, &e)
 	}
 	return result, rows.Err()
+}
+
+// SaveTasks 批量保存修炼任务。
+func (r *Repository) SaveTasks(ctx context.Context, tasks []*Task) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	for _, t := range tasks {
+		_, err := r.pool.Exec(ctx, `
+			INSERT INTO tasks
+			    (user_id, title, description, acceptance_criteria, category,
+			     source_evidence, target_score_hint, status)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+		`, t.UserID, t.Title, t.Description, t.AcceptanceCriteria,
+			t.Category, t.SourceEvidence, t.TargetScoreHint)
+		if err != nil {
+			return fmt.Errorf("save task: %w", err)
+		}
+	}
+	return nil
+}
+
+// GetPendingTasks 获取用户所有待完成任务，按创建时间升序。
+func (r *Repository) GetPendingTasks(ctx context.Context, userID string) ([]*Task, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, user_id, title, description, acceptance_criteria, category,
+		       source_evidence, target_score_hint, status, created_at, completed_at
+		FROM tasks
+		WHERE user_id = $1 AND status = 'pending'
+		ORDER BY created_at ASC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("query tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var result []*Task
+	for rows.Next() {
+		var t Task
+		if err := rows.Scan(
+			&t.ID, &t.UserID, &t.Title, &t.Description, &t.AcceptanceCriteria,
+			&t.Category, &t.SourceEvidence, &t.TargetScoreHint,
+			&t.Status, &t.CreatedAt, &t.CompletedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan task: %w", err)
+		}
+		result = append(result, &t)
+	}
+	return result, rows.Err()
+}
+
+// CountPendingTasks 返回用户当前待完成任务数量。
+func (r *Repository) CountPendingTasks(ctx context.Context, userID string) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM tasks WHERE user_id = $1 AND status = 'pending'
+	`, userID).Scan(&count)
+	return count, err
+}
+
+// UpdateTaskStatus 更新任务状态。status 为 'done' 时同步记录完成时间。
+func (r *Repository) UpdateTaskStatus(ctx context.Context, taskID, status string) error {
+	if status == "done" {
+		_, err := r.pool.Exec(ctx, `
+			UPDATE tasks SET status = $2, completed_at = NOW() WHERE id = $1
+		`, taskID, status)
+		return err
+	}
+	_, err := r.pool.Exec(ctx, `
+		UPDATE tasks SET status = $2 WHERE id = $1
+	`, taskID, status)
+	return err
 }
 
 // ScoreToLevel 根据分数返回法器掌握级别名称。
