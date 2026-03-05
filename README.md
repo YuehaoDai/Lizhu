@@ -622,5 +622,5 @@ migrate -database "postgres://lizhu:lizhu@localhost:5432/lizhu?sslmode=disable" 
 ---
 
 <p align="center">
-  <sub>骊珠洞天曾有一位护道人，他选择留下来。</sub>
+  <sub>洞天已开，此后同修。</sub>
 </p>
