@@ -25,6 +25,7 @@
 - [骊珠是什么](#骊珠是什么)
 - [功能特性](#功能特性)
 - [系统架构](#系统架构)
+- [系统工作原理](#系统工作原理)
 - [快速开始](#快速开始)
 - [CLI 命令](#cli-命令)
 - [完整配置说明](#完整配置说明)
@@ -217,6 +218,85 @@ lizhu/
 
 ---
 
+## 系统工作原理
+
+### 护道人每次对话看到什么
+
+每次你发送一条消息，Guardian Agent 会把以下内容拼成一个完整的 System Prompt 发给 LLM：
+
+```
+[世界观 YAML 节]          ← configs/worldview/ 下所有 YAML 拼装
+[修行者身份与档案]         ← cultivation_profile 表：境界分、法宝掌握度
+[近期会话摘要]             ← sessions 表最近 N 条（history_window 控制）
+[知识文件摘要列表]         ← knowledge_files 表：note add 过的文件名+摘要
+[RAG 检索结果]             ← Milvus 按当前输入相似度检索 top-3 知识块（仅 enabled=true 时）
+[待完成任务单]             ← tasks 表 status=pending 的任务（三期新增）
+[历史能力证据]             ← ability_evidence 表最近 20 条（仅 /assess 模式注入）
+```
+
+这就是为什么护道人"认得你"——每次对话他都拿到了你所有的历史积累，而不是空白上下文。
+
+### 记忆层架构
+
+骊珠维护四类持久记忆，各司其职：
+
+| 记忆类型 | 存储位置 | 更新时机 | 用途 |
+|------|------|------|------|
+| **修行档案** | `cultivation_profile` | `/assess` 评估后 | 境界分、法宝掌握度，护道人对你的"当前认知" |
+| **会话摘要** | `sessions` | 每次退出后 | 近期对话主题，提供短期上下文连续性 |
+| **能力证据** | `ability_evidence` | 每次退出后 | 具体技术事实（工具/置信度），评估时作为"证明材料"注入 |
+| **知识文件** | `knowledge_files` + Milvus | `lizhu note add` 时 | 笔记/代码语义索引，对话时自动召回 |
+
+### `/assess` 评估完整流程
+
+```
+你输入 /assess
+    │
+    ▼
+Guardian 构建 System Prompt（加入 eval_json 格式规范 + 历史能力证据）
+    │
+    ▼
+LLM 流式输出（可见部分打印给你）
+检测到 <eval_json> 标签 → 立即截断打印，后台 goroutine 接管
+    │
+    ├─► 解析 eval_json → 更新 cultivation_profile（境界分 + 法宝）
+    │
+    └─► Librarian Agent 异步生成修炼任务（锚定最近弱点）→ 存入 tasks 表
+
+你退出对话时（/quit）：
+    ├─► 等待评估 goroutine 完成
+    ├─► Librarian 生成会话摘要 → 存入 sessions
+    └─► Librarian 提炼能力证据 → 存入 ability_evidence
+```
+
+### 修炼任务单工作机制
+
+任务不是每次对话都生成，而是与评估绑定：
+
+```
+/assess 完成
+    │ Librarian 收到：本次对话 + 最近 10 条能力证据 + 近 3 次会话摘要 + 当前档案分数
+    │ → 锚定近期学习方向，找 1-2 个薄弱点
+    │ → 生成带明确验收标准的具体任务（待完成任务 ≥ 3 时跳过）
+    ▼
+tasks 表写入（status = pending）
+
+下次 lizhu chat
+    │ System Prompt 自动注入待完成任务
+    │ → 护道人主动追问进展
+    ▼
+你汇报完成情况
+    │ 护道人对照 acceptance_criteria 判断
+    │ → 通过：回复中附上 [TASK_DONE:<标题>]
+    │ → 系统自动更新 tasks.status = done
+    ▼
+/tasks 命令随时查看剩余任务
+```
+
+**关键约束**：任务必须有明确的可验证产出（如"提交一段运行代码"），而非"学习X"这类无法验收的目标。
+
+---
+
 ## 快速开始
 
 ### 前置要求
@@ -296,6 +376,7 @@ lizhu note list             列出所有已索引文件及摘要
 | 命令 | 功能 |
 |------|------|
 | `/assess` | 主动请求完整境界评估与破境方案（强制评估模式，LLM 必须给出完整报告）|
+| `/tasks` | 查看当前修炼任务单（标题、描述、验收标准）|
 | `/status` | 在对话中查看当前修行档案 |
 | `/clear` | 清空本次会话历史（已保存档案不受影响）|
 | `/quit` / `/exit` | 退出对话 |
@@ -501,6 +582,7 @@ go vet ./...
 | `000001_init.up.sql` | profiles、sessions、tool_mastery 表 |
 | `000002_knowledge_files.up.sql` | knowledge_files 表（含 summary 字段）|
 | `000003_ability_evidence.up.sql` | ability_evidence 表（结构化能力证据，含 category / tool / confidence 字段）|
+| `000004_tasks.up.sql` | tasks 表（修炼任务单，含 acceptance_criteria / status / completed_at 字段）|
 
 ```bash
 # 手动查看迁移状态（需安装 migrate CLI）

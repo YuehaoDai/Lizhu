@@ -133,14 +133,15 @@ func (a *Agent) ExtractEvidence(ctx context.Context, userName, conversation stri
 
 // ExtractTasks 根据评估对话和当前档案，生成 1-2 条具体可执行的修炼任务。
 // pendingCount 为当前未完成任务数量，超过 2 个时 LLM 会返回空数组。
-func (a *Agent) ExtractTasks(ctx context.Context, userName, conversation, profileSummary string, pendingCount int) ([]*RawTask, error) {
+// recentEvidence 为最近能力证据条目（反映最近在学什么），sessionSummaries 为近期会话摘要。
+func (a *Agent) ExtractTasks(ctx context.Context, userName, conversation, profileSummary string, pendingCount int, recentEvidence, sessionSummaries string) ([]*RawTask, error) {
 	if len(conversation) > 5000 {
 		conversation = conversation[:5000] + "……[对话过长，已截断]"
 	}
 
 	msgs := []*schema.Message{
 		schema.SystemMessage(taskExtractPrompt),
-		schema.UserMessage(buildTaskExtractPrompt(userName, conversation, profileSummary, pendingCount)),
+		schema.UserMessage(buildTaskExtractPrompt(userName, conversation, profileSummary, pendingCount, recentEvidence, sessionSummaries)),
 	}
 
 	resp, err := a.model.Generate(ctx, msgs)

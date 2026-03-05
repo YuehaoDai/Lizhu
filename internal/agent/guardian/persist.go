@@ -109,7 +109,30 @@ func (a *Agent) persistEvaluation(ctx context.Context, response string) error {
 				"Go练气分: %d, AI练气分: %d, 武夫分: %d",
 				profile.GoLianqiScore, profile.AILianqiScore, profile.WufuScore,
 			)
-			rawTasks, taskErr := a.librarian.ExtractTasks(taskCtx, a.cfg.UserName, response, profileSummary, pendingCount)
+
+			// 最近能力证据：反映修行者近期在学什么，供 Librarian 锚定任务方向
+			recentEvidence := ""
+			evidenceItems, evErr := a.repo.GetRecentEvidence(taskCtx, a.cfg.UserID, 10)
+			if evErr == nil && len(evidenceItems) > 0 {
+				var evSb strings.Builder
+				for _, e := range evidenceItems {
+					evSb.WriteString(fmt.Sprintf("- [%s] %s\n", e.Category, e.Evidence))
+				}
+				recentEvidence = evSb.String()
+			}
+
+			// 近期会话摘要：反映最近几次对话的主题
+			sessionSummaries := ""
+			recentSessions, sesErr := a.repo.GetRecentSessions(taskCtx, a.cfg.UserID, 3)
+			if sesErr == nil && len(recentSessions) > 0 {
+				var sesSb strings.Builder
+				for i, s := range recentSessions {
+					sesSb.WriteString(fmt.Sprintf("%d. %s\n", i+1, s.Summary))
+				}
+				sessionSummaries = sesSb.String()
+			}
+
+			rawTasks, taskErr := a.librarian.ExtractTasks(taskCtx, a.cfg.UserName, response, profileSummary, pendingCount, recentEvidence, sessionSummaries)
 			if taskErr != nil {
 				fmt.Printf("[警告] 修炼任务生成失败: %v\n", taskErr)
 				return
