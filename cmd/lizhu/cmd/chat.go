@@ -17,7 +17,7 @@ var chatCmd = &cobra.Command{
 	Short: "与护道人开始修行对话",
 	Long: `启动与护道人的交互式对话。
 
-输入 /quit 或 /exit 结束对话，/clear 清空本次会话历史，/status 查看当前档案。`,
+输入 /quit 或 /exit 结束对话，/clear 清空本次会话历史，/status 查看当前档案，/tasks 查看修炼任务单。`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runChatCLI(cmd.Context())
 	},
@@ -74,6 +74,9 @@ func runChatCLI(ctx context.Context) error {
 			continue
 		case "/status":
 			printStatusInlineCLI(ctx)
+			continue
+		case "/tasks":
+			printTasksInlineCLI(ctx)
 			continue
 		case "/help":
 			printChatHelp()
@@ -264,10 +267,38 @@ func printChatHelp() {
 可用命令：
   /assess  — 主动请求完整境界评估与破境方案
   /status  — 查看当前修行档案与法宝库
+  /tasks   — 查看当前修炼任务单
   /clear   — 清空本次会话历史（不影响已保存的档案）
   /quit    — 退出对话
   /help    — 显示此帮助
 `)
+}
+
+func printTasksInlineCLI(ctx context.Context) {
+	if repo == nil {
+		fmt.Println("[错误] 仓库未初始化")
+		return
+	}
+	tasks, err := repo.GetPendingTasks(ctx, "default")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "读取任务失败: %v\n", err)
+		return
+	}
+	fmt.Println()
+	fmt.Println("── 修炼任务单 ────────────────────────────────────")
+	if len(tasks) == 0 {
+		fmt.Println("  暂无待完成任务。完成一次 /assess 后，护道人会为你生成。")
+	} else {
+		for i, t := range tasks {
+			fmt.Printf("\n  【%d】%s\n", i+1, t.Title)
+			fmt.Printf("      %s\n", t.Description)
+			fmt.Printf("      验收：%s\n", t.AcceptanceCriteria)
+			if t.SourceEvidence != "" {
+				fmt.Printf("      来源：%s\n", t.SourceEvidence)
+			}
+		}
+	}
+	fmt.Println("\n───────────────────────────────────────────────────")
 }
 
 func printStatusInlineCLI(ctx context.Context) {
