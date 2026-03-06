@@ -223,7 +223,7 @@ func (a *Agent) PersistFullSession(ctx context.Context, history []*schema.Messag
 		UserID:          a.cfg.UserID,
 		Summary:         summary,
 		XinMoIdentified: []string{},
-		RawResponse:     lastReply,
+		RawResponse:     conversation,
 	}
 	if err := a.repo.SaveSession(ctx, session); err != nil {
 		return result, fmt.Errorf("save session: %w", err)
