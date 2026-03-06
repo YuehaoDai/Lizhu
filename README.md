@@ -96,7 +96,8 @@
 | **任务积压保护** | 待完成任务 ≥ 3 条时不再生成新任务，防止任务越积越多带来压迫感 |
 | **自然语言验收** | 护道人检测到回复中的 `[TASK_DONE:<标题>]` 标记后自动将任务标记为完成，无需修行者执行额外命令 |
 | **`/tasks` 命令** | 随时在对话中输入 `/tasks`，列出全部待完成任务的标题、描述与验收标准 |
-| **联网查阅** | 护道人通过 LLM Tool Calling 自主决定是否抓取网页；当你提供网址或问题需要实时信息时，自动拉取页面纯文本整合进回复，无需额外命令 |
+| **联网查阅** | 护道人通过 LLM Tool Calling 自主决定是否抓取网页；当你提供网址时，自动拉取页面纯文本（JS 渲染页自动降级到 Jina Reader）整合进回复 |
+| **主动搜索** | 配置 Brave Search API Key 后，护道人可对任意问题主动搜索互联网，无需用户提供 URL；返回 top-5 结果标题、链接与摘要 |
 
 ---
 
@@ -475,6 +476,11 @@ session:
 guardian:
   persona_id: ""              # 空 = 无名护道人；内置: "qi_jingchun"
   persona_name: ""            # 对话显示名称
+
+# ── 搜索（可选）──────────────────────────────────
+search:
+  brave_api_key: ""           # Brave Search API Key（申请：brave.com/search/api/）
+                              # 填写后护道人可主动搜索互联网；留空仅支持指定 URL 抓取
 ```
 
 ### 启用 RAG 知识库
@@ -611,7 +617,7 @@ migrate -database "postgres://lizhu:lizhu@localhost:5432/lizhu?sslmode=disable" 
         整次会话摘要 + 退出进度展示
 
 三期 🔜  [✅] 修炼任务单：评估后生成锚定弱点的具体任务，跨对话追踪验收
-         [✅] 联网查阅：LLM Tool Calling 驱动，护道人自主决定是否实时查询网页
+         [✅] 联网查阅：LLM Tool Calling 驱动，browse_web（含 Jina 降级）+ search_web（Brave Search）
          [近] 修行周报：Librarian 聚合多次会话，生成成长复盘
          [中] MCP Server：将护道人记忆层暴露为标准接口，接入 Cursor / Claude Desktop
          [中] Web 仪表盘：成长曲线、境界时间线、法宝库热力图

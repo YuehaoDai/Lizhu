@@ -172,6 +172,7 @@ func newGuardianAgent(ctx context.Context) (*guardian.Agent, error) {
 		PersonaName:   viper.GetString("guardian.persona_name"),
 		HistoryWindow: historyWindow,
 		KnowledgeCfg:  buildIngesterConfig(),
+		BraveAPIKey:   viper.GetString("search.brave_api_key"),
 	}
 	return guardian.New(ctx, cfg, repo)
 }

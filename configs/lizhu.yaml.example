@@ -38,3 +38,8 @@ session:
 guardian:
   persona_id: ""             # 护道人人格ID，空=无名护道人；如: "qi_jingchun"
   persona_name: ""           # 对话框显示名称，空=只显示"护道人"；如: "齐静春"
+
+# ── 搜索（可选）─────────────────────────────────────
+search:
+  brave_api_key: ""          # Brave Search API Key（申请：https://brave.com/search/api/）
+                             # 填写后护道人可主动搜索互联网；留空则仅支持指定 URL 抓取

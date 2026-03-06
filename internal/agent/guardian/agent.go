@@ -40,6 +40,8 @@ type Config struct {
 	HistoryWindow int // 注入的历史摘要数量
 	// RAG 知识库（可选，Enabled=false 时跳过检索）
 	KnowledgeCfg knowledge.Config
+	// 搜索（可选，空字符串时禁用 search_web 工具）
+	BraveAPIKey string
 }
 
 // Agent 护道人智能体。
@@ -91,12 +93,17 @@ func New(ctx context.Context, cfg Config, repo *episodic.Repository) (*Agent, er
 		libAgent = nil
 	}
 
-	// 尝试绑定 browse_web 工具，失败时降级为 nil（不影响核心对话功能）
+	// 尝试绑定网页工具，失败时降级为 nil（不影响核心对话功能）
 	var toolModel model.ToolCallingChatModel
 	if tc, ok := m.(model.ToolCallingChatModel); ok {
-		tm, err := tc.WithTools([]*schema.ToolInfo{browseWebToolInfo})
+		tools := []*schema.ToolInfo{browseWebToolInfo}
+		if cfg.BraveAPIKey != "" {
+			tools = append(tools, searchWebToolInfo)
+			fmt.Println("[联网] Brave Search 已启用，护道人可主动搜索互联网。")
+		}
+		tm, err := tc.WithTools(tools)
 		if err != nil {
-			fmt.Printf("[警告] 网页浏览工具绑定失败，本次会话禁用浏览功能: %v\n", err)
+			fmt.Printf("[警告] 网页工具绑定失败，本次会话禁用联网功能: %v\n", err)
 		} else {
 			toolModel = tm
 		}
@@ -542,19 +549,32 @@ func (a *Agent) chatStreamWithTools(
 
 	for _, tc := range toolCalls {
 		var toolResult string
-		if tc.Function.Name == "browse_web" {
-			url := extractJSONString(tc.Function.Arguments, "url")
-			if url == "" {
+		switch tc.Function.Name {
+		case "browse_web":
+			u := extractJSONString(tc.Function.Arguments, "url")
+			if u == "" {
 				toolResult = "错误：url 参数为空"
 			} else {
-				content, fetchErr := fetchWebContent(url)
+				content, fetchErr := fetchWebContent(u)
 				if fetchErr != nil {
 					toolResult = fmt.Sprintf("网页抓取失败: %v", fetchErr)
 				} else {
 					toolResult = content
 				}
 			}
-		} else {
+		case "search_web":
+			query := extractJSONString(tc.Function.Arguments, "query")
+			if query == "" {
+				toolResult = "错误：query 参数为空"
+			} else {
+				result, searchErr := searchWeb(query, a.cfg.BraveAPIKey)
+				if searchErr != nil {
+					toolResult = fmt.Sprintf("搜索失败: %v", searchErr)
+				} else {
+					toolResult = result
+				}
+			}
+		default:
 			toolResult = fmt.Sprintf("未知工具: %s", tc.Function.Name)
 		}
 		toolMessages = append(toolMessages, schema.ToolMessage(toolResult, tc.ID))
