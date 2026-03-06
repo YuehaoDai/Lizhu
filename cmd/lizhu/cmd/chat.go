@@ -7,10 +7,103 @@ import (
 	"strings"
 
 	"github.com/YuehaoDai/lizhu/internal/agent/guardian"
+	"github.com/charmbracelet/glamour"
 	"github.com/cloudwego/eino/schema"
 	"github.com/peterh/liner"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
+
+// getTerminalWidth 获取终端列宽，失败时返回默认值 80。
+func getTerminalWidth() int {
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || w <= 0 {
+		return 80
+	}
+	return w
+}
+
+// streamRenderer 在流式输出的同时追踪已占用的终端行数，
+// 输出完毕后用 ANSI 转义序列抹除原始文本，再用 glamour 重新渲染。
+type streamRenderer struct {
+	buf   strings.Builder
+	rows  int // 已经"换行/折行"的次数（不含当前行）
+	col   int // 当前列偏移
+	termW int
+}
+
+func newStreamRenderer() *streamRenderer {
+	return &streamRenderer{termW: getTerminalWidth()}
+}
+
+// print 打印字符串并同步更新行列计数。
+func (sr *streamRenderer) print(s string) {
+	fmt.Print(s)
+	sr.buf.WriteString(s)
+	for _, r := range s {
+		if r == '\n' {
+			sr.rows++
+			sr.col = 0
+		} else {
+			sr.col += runeDisplayWidth(r)
+			for sr.col >= sr.termW {
+				sr.rows++
+				sr.col -= sr.termW
+			}
+		}
+	}
+}
+
+// finalize 用 ANSI 序列抹除已打印的原始流，再以 glamour 重新渲染。
+// 调用后不需要再单独打印换行——glamour 输出末尾已含换行。
+func (sr *streamRenderer) finalize() {
+	text := sr.buf.String()
+	if text == "" {
+		return
+	}
+
+	// 回到流输出的起始行
+	if sr.rows > 0 {
+		fmt.Printf("\033[%dA", sr.rows)
+	}
+	fmt.Print("\r\033[J") // 回列首 + 清除到屏幕末尾
+
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(sr.termW-4),
+	)
+	if err != nil {
+		fmt.Print(text)
+		return
+	}
+	rendered, err := r.Render(text)
+	if err != nil {
+		fmt.Print(text)
+		return
+	}
+	fmt.Print(rendered)
+}
+
+// runeDisplayWidth 返回单个字符的终端显示列宽（CJK 等宽字符返回 2，其余返回 1）。
+func runeDisplayWidth(r rune) int {
+	if r >= 0x1100 && (r <= 0x115F ||
+		r == 0x2329 || r == 0x232A ||
+		(r >= 0x2E80 && r <= 0x303E) ||
+		(r >= 0x3040 && r <= 0x33FF) ||
+		(r >= 0x3400 && r <= 0x4DBF) ||
+		(r >= 0x4E00 && r <= 0x9FFF) ||
+		(r >= 0xA000 && r <= 0xA4CF) ||
+		(r >= 0xAC00 && r <= 0xD7AF) ||
+		(r >= 0xF900 && r <= 0xFAFF) ||
+		(r >= 0xFE10 && r <= 0xFE1F) ||
+		(r >= 0xFE30 && r <= 0xFE4F) ||
+		(r >= 0xFF00 && r <= 0xFF60) ||
+		(r >= 0xFFE0 && r <= 0xFFE6) ||
+		(r >= 0x20000 && r <= 0x2A6DF)) {
+		return 2
+	}
+	return 1
+}
 
 var chatCmd = &cobra.Command{
 	Use:   "chat",
@@ -95,10 +188,10 @@ func runChatCLI(ctx context.Context) error {
 			chatErr    error
 		)
 
+		sr := newStreamRenderer()
+
 		if assess {
 			// 评估模式：LLM 会生成 eval_json（及其前的标题行），使用多触发器滑动缓冲区过滤。
-			// 触发器按优先级：先检测 "修行档案JSON"（标题行），再检测 "<eval_json>"（标签本身）。
-			// 检测到任一触发器时，从所在行的行首开始截断（不打印该行及之后的内容）。
 			suppressTriggers := []string{"修行档案JSON", "<eval_json>"}
 			maxTrigLen := 0
 			for _, t := range suppressTriggers {
@@ -106,16 +199,15 @@ func runChatCLI(ctx context.Context) error {
 					maxTrigLen = len(t)
 				}
 			}
-			var buf strings.Builder
+			var suppressBuf strings.Builder
 			suppressed := false
 			_, newHistory, chatErr = agent.ChatStream(ctx, history, input, func(token string) {
 				if suppressed {
 					return
 				}
-				buf.WriteString(token)
-				s := buf.String()
+				suppressBuf.WriteString(token)
+				s := suppressBuf.String()
 
-				// 检查是否命中任一触发器
 				hitIdx := -1
 				for _, trig := range suppressTriggers {
 					if idx := strings.Index(s, trig); idx >= 0 {
@@ -126,37 +218,36 @@ func runChatCLI(ctx context.Context) error {
 				}
 				if hitIdx >= 0 {
 					suppressed = true
-					// 从行首截断：找到 hitIdx 之前最近的换行符
 					printUntil := hitIdx
 					if nl := strings.LastIndex(s[:hitIdx], "\n"); nl >= 0 {
-						printUntil = nl + 1 // 保留换行符本身，但不打印触发行
+						printUntil = nl + 1
 					}
 					if printUntil > 0 {
-						fmt.Print(s[:printUntil])
+						sr.print(s[:printUntil])
 					}
-					buf.Reset()
+					suppressBuf.Reset()
 					return
 				}
 
-				// 保留末尾 maxTrigLen-1 字节作为预警窗口
 				safe := len(s) - (maxTrigLen - 1)
 				if safe > 0 {
-					fmt.Print(s[:safe])
+					sr.print(s[:safe])
 					tail := s[safe:]
-					buf.Reset()
-					buf.WriteString(tail)
+					suppressBuf.Reset()
+					suppressBuf.WriteString(tail)
 				}
 			}, true)
-			if !suppressed && buf.Len() > 0 {
-				fmt.Print(buf.String())
+			if !suppressed && suppressBuf.Len() > 0 {
+				sr.print(suppressBuf.String())
 			}
 		} else {
-			// 普通护道对话：LLM 不生成 eval_json，token 直接输出
+			// 普通护道对话：token 经 streamRenderer 输出，结束后 glamour 重渲染
 			_, newHistory, chatErr = agent.ChatStream(ctx, history, input, func(token string) {
-				fmt.Print(token)
+				sr.print(token)
 			}, false)
 		}
 
+		sr.finalize()
 		fmt.Println()
 		if chatErr != nil {
 			fmt.Fprintf(os.Stderr, "\n[错误] %v\n", chatErr)
@@ -210,25 +301,7 @@ func runShutdownSequence(ctx context.Context, agent *guardian.Agent, history []*
 func termWidth(s string) int {
 	w := 0
 	for _, r := range s {
-		if r >= 0x1100 && (r <= 0x115F || // Hangul Jamo
-			r == 0x2329 || r == 0x232A ||
-			(r >= 0x2E80 && r <= 0x303E) || // CJK Radicals Supplement .. CJK Symbols
-			(r >= 0x3040 && r <= 0x33FF) || // Japanese
-			(r >= 0x3400 && r <= 0x4DBF) || // CJK Unified Ideographs Extension A
-			(r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
-			(r >= 0xA000 && r <= 0xA4CF) || // Yi
-			(r >= 0xAC00 && r <= 0xD7AF) || // Hangul Syllables
-			(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility Ideographs
-			(r >= 0xFE10 && r <= 0xFE1F) || // Vertical forms
-			(r >= 0xFE30 && r <= 0xFE4F) || // CJK Compatibility Forms
-			(r >= 0xFF00 && r <= 0xFF60) || // Fullwidth Forms
-			(r >= 0xFFE0 && r <= 0xFFE6) ||
-			(r >= 0x1F300 && r <= 0x1F64F) || // Misc Symbols and Pictographs
-			(r >= 0x20000 && r <= 0x2A6DF)) { // CJK Extension B
-			w += 2
-		} else {
-			w++
-		}
+		w += runeDisplayWidth(r)
 	}
 	return w
 }
