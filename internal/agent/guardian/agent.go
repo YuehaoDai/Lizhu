@@ -329,7 +329,9 @@ func (a *Agent) ChatStream(ctx context.Context, history []*schema.Message, userI
 // assess=true 时加载含 eval_json 指令的评估节；assess=false 时跳过，保持纯对话。
 func (a *Agent) buildSystemMessage(ctx context.Context, userInput string, assess bool) (string, error) {
 	// 世界观系统提示（透传人格ID，加载对应语料）
-	worldviewPrompt, err := a.loader.BuildSystemPrompt(a.cfg.ActivePath, a.cfg.PersonaID, assess)
+	worldviewPrompt, err := a.loader.BuildSystemPrompt(a.cfg.ActivePath, a.cfg.PersonaID, assess, map[string]string{
+		"UserName": a.cfg.UserName,
+	})
 	if err != nil {
 		return "", err
 	}

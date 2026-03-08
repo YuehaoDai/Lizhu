@@ -27,7 +27,8 @@ func NewLoader(dir string) *Loader {
 // personaID 非空时额外包含 persona_id 与之匹配的节。
 // assess=true 时包含所有节（含 assess_only 节，用于 /assess 评估命令）；
 // assess=false 时跳过 assess_only 节，LLM 不会收到 eval_json 相关指令。
-func (l *Loader) BuildSystemPrompt(path ActivePath, personaID string, assess bool) (string, error) {
+// vars 为可选的模板变量表，键值对会将提示词中 {{.Key}} 占位符替换为对应值。
+func (l *Loader) BuildSystemPrompt(path ActivePath, personaID string, assess bool, vars map[string]string) (string, error) {
 	sections, err := l.loadAll()
 	if err != nil {
 		return "", fmt.Errorf("worldview: load sections: %w", err)
@@ -72,7 +73,11 @@ func (l *Loader) BuildSystemPrompt(path ActivePath, personaID string, assess boo
 
 	var sb strings.Builder
 	for _, s := range filtered {
-		sb.WriteString(strings.TrimSpace(s.Content))
+		content := strings.TrimSpace(s.Content)
+		for k, v := range vars {
+			content = strings.ReplaceAll(content, "{{."+k+"}}", v)
+		}
+		sb.WriteString(content)
 		sb.WriteString("\n\n")
 	}
 
