@@ -195,22 +195,63 @@ func (a *Agent) PersistFullSession(ctx context.Context, history []*schema.Messag
 	}
 
 	var result PersistResult
-	var summary string
 
-	// 优先调用 Librarian 生成整个会话的语义摘要
-	if a.librarian != nil {
-		sumCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		defer cancel()
-		s, err := a.librarian.SummarizeSession(sumCtx, a.cfg.UserName, conversation)
-		if err == nil && s != "" {
-			summary = s
-			result.SummaryGenerated = true
-		} else {
-			fmt.Printf("[警告] 会话摘要生成失败，回退到截断文本: %v\n", err)
-		}
+	// 并行执行摘要生成和证据提炼（互不依赖，各自独立超时）
+	type summaryResult struct {
+		text string
+		err  error
+	}
+	type evidenceResult struct {
+		items []*episodic.EvidenceItem
+		err   error
 	}
 
-	// 降级：Librarian 不可用时截取最后一条回复前 80 字
+	sumCh := make(chan summaryResult, 1)
+	evCh := make(chan evidenceResult, 1)
+
+	if a.librarian != nil {
+		go func() {
+			sumCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			defer cancel()
+			s, err := a.librarian.SummarizeSession(sumCtx, a.cfg.UserName, conversation)
+			sumCh <- summaryResult{text: s, err: err}
+		}()
+
+		go func() {
+			evCtx, evCancel := context.WithTimeout(ctx, 45*time.Second)
+			defer evCancel()
+			rawItems, err := a.librarian.ExtractEvidence(evCtx, a.cfg.UserName, conversation)
+			if err != nil {
+				evCh <- evidenceResult{err: err}
+				return
+			}
+			var items []*episodic.EvidenceItem
+			for _, r := range rawItems {
+				items = append(items, &episodic.EvidenceItem{
+					UserID:     a.cfg.UserID,
+					Category:   r.Category,
+					Tool:       r.Tool,
+					Evidence:   r.Evidence,
+					Confidence: r.Confidence,
+				})
+			}
+			evCh <- evidenceResult{items: items}
+		}()
+	} else {
+		sumCh <- summaryResult{}
+		evCh <- evidenceResult{}
+	}
+
+	// 等待摘要结果
+	sumRes := <-sumCh
+	summary := ""
+	if sumRes.err == nil && sumRes.text != "" {
+		summary = sumRes.text
+		result.SummaryGenerated = true
+	} else if sumRes.err != nil {
+		fmt.Printf("[警告] 会话摘要生成失败，回退到截断文本: %v\n", sumRes.err)
+	}
+
 	if summary == "" {
 		runes := []rune(lastReply)
 		summary = string(runes)
@@ -229,32 +270,17 @@ func (a *Agent) PersistFullSession(ctx context.Context, history []*schema.Messag
 		return result, fmt.Errorf("save session: %w", err)
 	}
 
-	// 检测护道人在回复中附上的 [TASK_DONE:<任务标题>] 验收标记，更新任务状态
 	a.processTaskDoneMarkers(ctx, history)
 
-	// 提炼能力证据条目（独立 timeout，失败不影响摘要保存）
-	if a.librarian != nil {
-		evCtx, evCancel := context.WithTimeout(ctx, 15*time.Second)
-		defer evCancel()
-		rawItems, err := a.librarian.ExtractEvidence(evCtx, a.cfg.UserName, conversation)
-		if err != nil {
-			fmt.Printf("[警告] 能力证据提炼失败: %v\n", err)
+	// 等待证据结果
+	evRes := <-evCh
+	if evRes.err != nil {
+		fmt.Printf("[警告] 能力证据提炼失败: %v\n", evRes.err)
+	} else if len(evRes.items) > 0 {
+		if saveErr := a.repo.SaveEvidenceItems(ctx, evRes.items); saveErr != nil {
+			fmt.Printf("[警告] 能力证据保存失败: %v\n", saveErr)
 		} else {
-			var items []*episodic.EvidenceItem
-			for _, r := range rawItems {
-				items = append(items, &episodic.EvidenceItem{
-					UserID:     a.cfg.UserID,
-					Category:   r.Category,
-					Tool:       r.Tool,
-					Evidence:   r.Evidence,
-					Confidence: r.Confidence,
-				})
-			}
-			if saveErr := a.repo.SaveEvidenceItems(ctx, items); saveErr != nil {
-				fmt.Printf("[警告] 能力证据保存失败: %v\n", saveErr)
-			} else {
-				result.EvidenceCount = len(items)
-			}
+			result.EvidenceCount = len(evRes.items)
 		}
 	}
 
